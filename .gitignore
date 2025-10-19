@@ -1,9 +1,20 @@
+# 환경/비밀
+.env
+*.env
+# 가상환경
 .venv/
+venv/
 capstoneAI/
+# 캐시/출력/데이터/모델
 __pycache__/
 .ipynb_checkpoints/
 data/
 outputs/
-*.pt *.bin *.ckpt *.tar *.tar.gz *.zip *.7z
-.vscode/
-.env
+checkpoints/
+*.pt
+*.bin
+*.safetensors
+*.ckpt
+# 편의
+.DS_Store
+Thumbs.db
