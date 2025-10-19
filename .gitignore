@@ -1,0 +1,9 @@
+.venv/
+capstoneAI/
+__pycache__/
+.ipynb_checkpoints/
+data/
+outputs/
+*.pt *.bin *.ckpt *.tar *.tar.gz *.zip *.7z
+.vscode/
+.env
