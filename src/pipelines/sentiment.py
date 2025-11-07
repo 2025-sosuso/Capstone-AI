@@ -117,9 +117,9 @@ async def analyze_sentiment_async(
     results = pipe(list(processed), batch_size=64)
 
     # ✅ 결과 매핑
-    label_map = {"LABEL_0": "NEGATIVE", "LABEL_1": "NEUTRAL", "LABEL_2": "POSITIVE"}
+    label_map = {"LABEL_0": "OTHER", "LABEL_1": "OTHER", "LABEL_2": "POSITIVE"}
     per_comment: Dict[str, str] = {
-        cid: label_map.get(r["label"], "NEUTRAL") for cid, r in zip(ids, results)
+        cid: label_map.get(r["label"], "OTHER") for cid, r in zip(ids, results)
     }
 
     # ✅ 전체 비율 계산
@@ -127,7 +127,7 @@ async def analyze_sentiment_async(
     total = max(sum(cnt.values()), 1)
     ratio = {
         "positive": round(cnt.get("POSITIVE", 0) / total * 100, 2),
-        "neutral":  round(cnt.get("NEUTRAL", 0) / total * 100, 2),
+        "other":  round(cnt.get("OTHER", 0) / total * 100, 2),
         "negative": round(cnt.get("NEGATIVE", 0) / total * 100, 2),
     }
 
