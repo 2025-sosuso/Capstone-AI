@@ -5,9 +5,50 @@
 - 한국어/영어 공통 불용어 필터링
 - 1~2 gram 사용 + 결과에서 부분문자열(긴 구절) 중복 제거
 """
-from typing import List
-from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
+import os
+import sys
 import re
+from typing import List
+
+# ============================================================
+# Windows 한글 깨짐 방지 (최상단 배치)
+# ============================================================
+if sys.platform == 'win32':
+    # 1. 환경 변수 설정
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+    
+    # 2. 표준 출력/에러 스트림 재설정
+    if hasattr(sys.stdout, 'reconfigure'):
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    
+    if hasattr(sys.stderr, 'reconfigure'):
+        try:
+            sys.stderr.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
+    
+    # 3. Windows 콘솔 코드 페이지를 UTF-8로 설정
+    try:
+        import subprocess
+        subprocess.run(['chcp', '65001'], shell=True, 
+                      capture_output=True, check=False)
+    except Exception:
+        pass
+
+from sklearn.feature_extraction.text import TfidfVectorizer, ENGLISH_STOP_WORDS
+
+# ============================================================
+# API 키 및 유틸리티 불러오기
+# ============================================================
+try:
+    from src.config import YOUTUBE_API_KEY, VIDEO_KEY
+    from src.utils.youtube import fetch_youtube_comments
+except ImportError:
+    from ..config import YOUTUBE_API_KEY, VIDEO_KEY
+    from ..utils.youtube import fetch_youtube_comments
 
 # -----------------------------
 # 1) 불용어 (영어 + 한국어)
@@ -97,6 +138,9 @@ def extract_keywords_tfidf(comments: List[str], top_n: int = 10) -> List[str]:
     - comments: 문서 리스트
     - top_n: 상위 몇 개 단어를 반환할지
     - 불용어 제거 + 1~2그램 + 부분중복 제거
+    
+    반환:
+        List[str]: 추출된 키워드 리스트 (AIAnalysisResponse의 keywords 필드)
     """
     if not comments:
         return []
@@ -126,3 +170,79 @@ def extract_keywords_tfidf(comments: List[str], top_n: int = 10) -> List[str]:
 
     # 부분문자열 중복 제거(짧은 핵심어 위주로 남김)
     return _dedup_substrings(cleaned, top_n)
+
+
+# ============================================================
+# 사용 예시 (테스트용 코드)
+# ============================================================
+if __name__ == "__main__":
+    import json
+    
+    # config.py에서 VIDEO_KEY 확인
+    if not VIDEO_KEY:
+        print("[ERROR] VIDEO_KEY가 .env 파일에 설정되지 않았습니다.")
+        print("[INFO] 테스트 데이터로 실행합니다.\n")
+        
+        # 테스트 데이터
+        test_comments = [
+            "정말 유익한 영상이네요! 감사합니다.",
+            "설명이 정말 잘 되어있어요. 유익한 정보 감사합니다.",
+            "이해하기 쉽게 설명해주셔서 감사해요.",
+            "좋은 정보 감사합니다. 도움이 많이 되었어요.",
+            "유익한 영상 감사합니다. 구독하고 갑니다!",
+        ]
+        
+        keywords = extract_keywords_tfidf(test_comments, top_n=10)
+        
+        # JSON 형식으로 출력
+        result = {"keywords": keywords}
+        print("=" * 60)
+        print("[결과] 키워드 추출 (테스트 데이터):")
+        print("=" * 60)
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print("=" * 60)
+        
+    else:
+        if not YOUTUBE_API_KEY:
+            print("[ERROR] YOUTUBE_API_KEY가 .env 파일에 설정되지 않았습니다.")
+            sys.exit(1)
+        
+        print(f"[INFO] YouTube 비디오 '{VIDEO_KEY}'에서 댓글 수집 중...")
+        
+        try:
+            # YouTube 댓글 수집
+            youtube_comments = fetch_youtube_comments(
+                video_id=VIDEO_KEY,
+                api_key=YOUTUBE_API_KEY,
+                max_pages=1,           # 1페이지 (100개)
+                page_size=100,         # 페이지당 100개
+                include_replies=False, # 대댓글 제외
+                apply_cleaning=True,   # 텍스트 전처리 적용
+            )
+            
+            print(f"[SUCCESS] {len(youtube_comments)}개 댓글 수집 완료!")
+            
+            if not youtube_comments:
+                print("[WARNING] 수집된 댓글이 없습니다.")
+                sys.exit(0)
+            
+            # 키워드 추출 실행
+            print(f"[INFO] 키워드 추출 중...\n")
+            keywords = extract_keywords_tfidf(youtube_comments, top_n=10)
+            
+            # ============================================================
+            # JSON 형식으로 결과 출력 (AIAnalysisResponse의 keywords 필드)
+            # ============================================================
+            result = {"keywords": keywords}
+            
+            print("=" * 60)
+            print("[결과] 키워드 추출 (keywords 필드):")
+            print("=" * 60)
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            print("=" * 60)
+            
+        except Exception as e:
+            print(f"[ERROR] 처리 실패: {e}")
+            import traceback
+            traceback.print_exc()
+            sys.exit(1)
