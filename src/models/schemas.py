@@ -35,3 +35,4 @@ class AIAnalysisResponse(BaseModel):
     sentimentComments: List[CommentSentimentDetail]
     languageRatio: Dict[str, float]
     sentimentRatio: Dict[str, float]
+

@@ -100,13 +100,14 @@ def _get_sentiment_pipeline():
         # 모델 로드: 실제 감정 분류를 수행하는 신경망
         _model = AutoModelForSequenceClassification.from_pretrained(_MNAME)
         
+        # 🔄 변경됨: top_k=1 → top_k=3 (여러 감정 반환)
         # 파이프라인 생성: 전처리→모델 예측→후처리를 한번에
         _pipe = pipeline(
             task="text-classification",           # 감정 분석 작업
             model=_model,                         # 위에서 로드한 모델
             tokenizer=_tok,                       # 위에서 로드한 토크나이저
             device=0 if torch.cuda.is_available() else -1,  # GPU 있으면 0번 GPU 사용, 없으면 CPU(-1)
-            top_k=1,                              # 최고 점수 1개만 반환
+            top_k=3,                              # 🔄 상위 3개 감정 반환 (기존: top_k=1)
         )
         print("[SUCCESS] GoEmotions 모델 로딩 완료!")
         print(f"[INFO] 라벨 개수: {len(_model.config.id2label)}개")
@@ -206,10 +207,10 @@ async def analyze_sentiment_async(
     처리 과정:
     1. 입력을 표준 형태로 변환
     2. 한국어 → 영어 번역 (DeepL)
-    3. 모델을 사용해 각 댓글의 감정 예측 (GoEmotions 28개)
+    3. 모델을 사용해 각 댓글의 감정 예측 (GoEmotions 28개 중 상위 3개)
     4. GoEmotions의 28개 감정 → 7개 감정으로 그룹핑
     5. 7개 감정을 POSITIVE/NEGATIVE/OTHER로 분류
-    6. CommentSentimentDetail 객체 리스트 생성
+    6. CommentSentimentDetail 객체 리스트 생성 (세부 감정 0~3개)
     """
     # ============================================================
     # STEP 1: 입력 정규화
@@ -227,7 +228,7 @@ async def analyze_sentiment_async(
     translated = [await _translate_to_english(t) for t in texts]
     
     # ============================================================
-    # STEP 3: GoEmotions 예측 (28개 감정)
+    # STEP 3: GoEmotions 예측 (28개 감정 중 상위 3개)
     # ============================================================
     pipe = _get_sentiment_pipeline()
     results = pipe(translated, batch_size=64)  # 64개씩 배치로 처리 (속도 향상)
@@ -276,28 +277,46 @@ async def analyze_sentiment_async(
     }
     
     # ============================================================
-    # STEP 5: CommentSentimentDetail 리스트 생성
+    # 🔄 STEP 5: CommentSentimentDetail 리스트 생성 (변경됨)
     # ============================================================
     sentiment_comments: List[CommentSentimentDetail] = []
     sentiment_category_counter = Counter()  # POSITIVE/NEGATIVE/OTHER 카운트
     
     for cid, text, result in zip(ids, texts, results):
-        # GoEmotions 28개를 7개 감정으로 변환
-        original_label = result[0]["label"]
-        detail_emotion = label_map.get(original_label, "neutral")
+        # 🔄 변경됨: result는 이제 리스트 (top_k=3이므로 최대 3개)
+        # 각 감정의 확률(score)이 20% 이상인 것만 선택
+        detail_emotions = []
         
-        # 7개 감정을 POSITIVE/NEGATIVE/OTHER로 변환
-        sentiment_type = detail_to_sentiment_map[detail_emotion]
+        for pred in result:
+            original_label = pred["label"]
+            score = pred["score"]
+            
+            # 🔄 확률이 20% 이상인 감정만 포함 (임계값)
+            if score >= 0.15: # 감정이 1개 씩만 나와서 0.2 -> 0.15 로 바꿈
+                detail_emotion = label_map.get(original_label, "neutral")
+                detail_emotions.append(detail_emotion)
+        
+        # 🔄 감정이 없으면 neutral 추가 (안전장치)
+        if not detail_emotions:
+            detail_emotions = ["neutral"]
+        
+        # 🔄 중복 제거 (같은 감정이 여러 번 나올 수 있음)
+        # 예: ["joy", "joy", "love"] → ["joy", "love"]
+        detail_emotions = list(dict.fromkeys(detail_emotions))
+        
+        # 🔄 가장 높은 점수의 감정(첫 번째)으로 전체 sentiment_type 결정
+        primary_emotion = detail_emotions[0]
+        sentiment_type = detail_to_sentiment_map[primary_emotion]
         
         # 카운트 증가
         sentiment_category_counter[sentiment_type] += 1
         
-        # CommentSentimentDetail 객체 생성
+        # 🔄 CommentSentimentDetail 객체 생성 (여러 세부 감정 포함)
         comment_detail = CommentSentimentDetail(
             apiCommentId=cid,
             content=text,
             sentimentType=SentimentType(sentiment_type),
-            detailSentimentTypes=[DetailSentimentType(detail_emotion.upper())]  # 리스트로 감싸기
+            detailSentimentTypes=[DetailSentimentType(e.upper()) for e in detail_emotions]  # 🔄 리스트로 변환
         )
         sentiment_comments.append(comment_detail)
     
@@ -306,9 +325,9 @@ async def analyze_sentiment_async(
     # ============================================================
     total = max(sum(sentiment_category_counter.values()), 1)
     sentiment_ratio = {
-        "POSITIVE": round(sentiment_category_counter.get("POSITIVE", 0) / total * 100, 2),
-        "NEGATIVE": round(sentiment_category_counter.get("NEGATIVE", 0) / total * 100, 2),
-        "OTHER": round(sentiment_category_counter.get("OTHER", 0) / total * 100, 2),
+        "POSITIVE": round(sentiment_category_counter.get("POSITIVE", 0) / total, 2),
+        "NEGATIVE": round(sentiment_category_counter.get("NEGATIVE", 0) / total, 2),
+        "OTHER": round(sentiment_category_counter.get("OTHER", 0) / total, 2),
     }
     
     # ============================================================
@@ -375,7 +394,7 @@ if __name__ == "__main__":
         print(f"  {i}. {comment.apiCommentId}")
         print(f"     내용: {comment.content[:50]}...")
         print(f"     감정 타입: {comment.sentimentType.value}")
-        print(f"     세부 감정: {[d.value for d in comment.detailSentimentTypes]}")
+        print(f"     세부 감정: {[d.value for d in comment.detailSentimentTypes]}")  # 🔄 여러 감정 표시
     if len(sentiment_comments) > 5:
         print(f"  ... (총 {len(sentiment_comments)}개 댓글)")
     
