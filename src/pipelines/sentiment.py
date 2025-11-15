@@ -1,5 +1,5 @@
 # src/pipelines/sentiment.py
-from __future__ import annotations # 타입 힌팅할 때 사용함, 자기 참조하는 타입을 따옴표 없이 쓸 수 있게 해주는 것.
+from __future__ import annotations
 
 import os
 import sys
@@ -12,20 +12,20 @@ from pathlib import Path
 if sys.platform == 'win32':
     # 1. 환경 변수 설정
     os.environ['PYTHONIOENCODING'] = 'utf-8'
-    
+
     # 2. 표준 출력/에러 스트림 재설정
     if hasattr(sys.stdout, 'reconfigure'):
         try:
             sys.stdout.reconfigure(encoding='utf-8')
         except Exception:
             pass
-    
+
     if hasattr(sys.stderr, 'reconfigure'):
         try:
             sys.stderr.reconfigure(encoding='utf-8')
         except Exception:
             pass
-    
+
     # 3. Windows 콘솔 코드 페이지를 UTF-8로 설정
     try:
         import subprocess
@@ -51,9 +51,6 @@ from typing import Dict, List, Tuple, Union # 타입 힌팅을 위한 도구들
 import torch # 딥러닝 프레임워크, 신경망 모델 학습 및 실행할 때 사용됨.
 import httpx
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
-    # AutoTokenizer: 텍스트를 숫자로 변환해주는 도구
-    # AutoModelForSequenceClassification: 텍스트 분류를 위한 모델
-    # pipeline: 전처리 -> 모델 -> 후처리를 한 번에 처리해주는 도구
 
 # ============================================================
 # API 키 불러오기 (config.py에서)
@@ -72,20 +69,20 @@ except ImportError:
 # ============================================================
 _MNAME = "SamLowe/roberta-base-go_emotions"
 
-_tok = None      # 토크나이저 (텍스트를 숫자로 변환하는 도구)
-_model = None    # 감정 분류 모델
-_pipe = None     # 파이프라인 (입력→전처리→모델→후처리를 한번에 처리)
+_tok = None  # 토크나이저 (텍스트를 숫자로 변환하는 도구)
+_model = None  # 감정 분류 모델
+_pipe = None  # 파이프라인 (입력→전처리→모델→후처리를 한번에 처리)
 
 
 def _get_sentiment_pipeline():
     """
     영어 GoEmotions 파이프라인 로드 (지연 로딩)
-    
+
     작동 원리:
     1. 처음 호출될 때만 모델/토크나이저를 메모리에 로드
     2. 이후 호출에서는 이미 로드된 것을 재사용 (빠름!)
     3. GPU가 있으면 자동으로 GPU 사용 (속도 향상)
-    
+
     반환: transformers의 pipeline 객체
     """
     global _tok, _model, _pipe
@@ -111,24 +108,24 @@ def _get_sentiment_pipeline():
         )
         print("[SUCCESS] GoEmotions 모델 로딩 완료!")
         print(f"[INFO] 라벨 개수: {len(_model.config.id2label)}개")
-    
+
     return _pipe
 
 
 async def _translate_to_english(text: str) -> str:
     """
     한국어를 영어로 번역 (DeepL API 사용)
-    
+
     Args:
         text: 번역할 한국어 텍스트
-        
+
     Returns:
         번역된 영어 텍스트 (실패 시 원문 반환)
     """
     if not DEEPL_API_KEY:
         print("[WARNING] DeepL API 키가 없어 번역 생략")
         return text
-    
+
     async with httpx.AsyncClient() as client:
         try:
             resp = await client.post(
@@ -153,14 +150,14 @@ def _normalize_input(
 ) -> Tuple[List[str], List[str]]:
     """
     다양한 형태의 입력을 통일된 형태로 변환
-    
+
     입력 가능한 형태:
     1. Dict[commentId, text]        → commentId를 그대로 사용
     2. List[Tuple[commentId, text]] → commentId를 그대로 사용
     3. List[str]                    → 자동으로 0, 1, 2... 인덱스 부여
-    
+
     반환: (댓글 ID 리스트, 댓글 텍스트 리스트)
-    
+
     예시:
     - {"c1": "좋아요", "c2": "싫어"} → (["c1", "c2"], ["좋아요", "싫어"])
     - [("c1", "좋아요"), ("c2", "싫어")] → (["c1", "c2"], ["좋아요", "싫어"])
@@ -172,61 +169,66 @@ def _normalize_input(
             ids, texts = zip(*comments.items())  # 딕셔너리를 (키, 값) 튜플로 분리
             return list(ids), list(texts)
         return [], []
-    
+
     # 경우 2: 튜플 리스트 입력 [(id, text), ...]
     if isinstance(comments, list) and comments and isinstance(comments[0], tuple):
         ids = [cid for cid, _t in comments]
         texts = [_t for _cid, _t in comments]
         return ids, texts
-    
+
     # 경우 3: 단순 텍스트 리스트 ["text1", "text2", ...]
     if isinstance(comments, list):
         texts = list(comments)
         ids = [str(i) for i in range(len(texts))]  # 0, 1, 2... 인덱스 부여
         return ids, texts
-    
+
     # 그 외의 경우: 빈 리스트 반환
     return [], []
 
 
 async def analyze_sentiment_async(
-    comments_dict: Union[Dict[str, str], List[Tuple[str, str]], List[str]]
+        comments_dict: Union[Dict[str, str], List[Tuple[str, str]], List[str]]
 ) -> Tuple[List[CommentSentimentDetail], Dict[str, float]]:
     """
     댓글들의 감정을 분석하는 비동기 함수
-    
+
     입력:
       - Dict[commentId, text]: 댓글 ID와 텍스트 쌍의 딕셔너리
       - List[Tuple[commentId, text]]: 댓글 ID와 텍스트 튜플의 리스트
       - List[text]: 텍스트만 있는 리스트
-    
+
     출력:
-      - (CommentSentimentDetail 리스트, 긍정/부정/기타 비율)
-      - 예: ([CommentSentimentDetail(...), ...], {"POSITIVE": 50.0, "NEGATIVE": 25.0, "OTHER": 25.0})
-    
+      - (CommentSentimentDetail 리스트, 긍정/부정/기타 비율, 번역된 텍스트 리스트)
+
     처리 과정:
     1. 입력을 표준 형태로 변환
-    2. 한국어 → 영어 번역 (DeepL)
+    2. 한국어 → 영어 병렬 번역 (DeepL)
     3. 모델을 사용해 각 댓글의 감정 예측 (GoEmotions 28개 중 상위 3개)
     4. GoEmotions의 28개 감정 → 7개 감정으로 그룹핑
     5. 7개 감정을 POSITIVE/NEGATIVE/OTHER로 분류
-    6. CommentSentimentDetail 객체 리스트 생성 (세부 감정 0~3개)
+    6. CommentSentimentDetail 객체 리스트 생성
+    7. 번역된 텍스트 반환 (논란 감지에서 재사용)
     """
     # ============================================================
     # STEP 1: 입력 정규화
     # ============================================================
     ids, texts = _normalize_input(comments_dict)
-    
+
     # 빈 입력이면 빈 결과 반환
     if not texts:
-        return [], {}
-    
+        return [], {}, []
+
     # ============================================================
-    # STEP 2: 한국어 → 영어 번역
+    # STEP 2: 한국어 → 영어 병렬 번역
     # ============================================================
-    print(f"[INFO] {len(texts)}개 댓글 번역 중...")
-    translated = [await _translate_to_english(t) for t in texts]
-    
+    print(f"[INFO] {len(texts)}개 댓글 병렬 번역 중...")
+
+    # 병렬 번역 (asyncio.gather 사용)
+    tasks = [_translate_to_english(t) for t in texts]
+    translated = await asyncio.gather(*tasks)
+
+    print(f"[INFO] 번역 완료!")
+
     # ============================================================
     # STEP 3: GoEmotions 예측 (28개 감정 중 상위 3개)
     # ============================================================
@@ -242,29 +244,29 @@ async def analyze_sentiment_async(
         "admiration": "joy", "amusement": "joy", "approval": "joy",
         "excitement": "joy", "joy": "joy", "optimism": "joy",
         "pride": "joy", "relief": "joy",
-        
+
         # 애정 관련 → love (사랑)
         "caring": "love", "desire": "love", "love": "love",
-        
+
         # 감사 → gratitude (감사)
         "gratitude": "gratitude",
-        
+
         # 분노 관련 → anger (분노)
         "anger": "anger", "annoyance": "anger",
         "disapproval": "anger", "disgust": "anger",
-        
+
         # 슬픔 관련 → sadness (슬픔)
         "disappointment": "sadness", "embarrassment": "sadness",
         "grief": "sadness", "remorse": "sadness", "sadness": "sadness",
-        
+
         # 두려움 관련 → fear (두려움)
         "fear": "fear", "nervousness": "fear",
-        
+
         # 중립/기타 → neutral
         "confusion": "neutral", "curiosity": "neutral",
         "neutral": "neutral", "realization": "neutral", "surprise": "neutral",
     }
-    
+
     # 7개 감정을 POSITIVE/NEGATIVE/OTHER로 매핑
     detail_to_sentiment_map = {
         "joy": "POSITIVE",
@@ -275,42 +277,42 @@ async def analyze_sentiment_async(
         "fear": "NEGATIVE",
         "neutral": "OTHER",
     }
-    
+
     # ============================================================
     # 🔄 STEP 5: CommentSentimentDetail 리스트 생성 (변경됨)
     # ============================================================
     sentiment_comments: List[CommentSentimentDetail] = []
     sentiment_category_counter = Counter()  # POSITIVE/NEGATIVE/OTHER 카운트
-    
+
     for cid, text, result in zip(ids, texts, results):
         # 🔄 변경됨: result는 이제 리스트 (top_k=3이므로 최대 3개)
         # 각 감정의 확률(score)이 20% 이상인 것만 선택
         detail_emotions = []
-        
+
         for pred in result:
             original_label = pred["label"]
             score = pred["score"]
-            
+
             # 🔄 확률이 20% 이상인 감정만 포함 (임계값)
             if score >= 0.15: # 감정이 1개 씩만 나와서 0.2 -> 0.15 로 바꿈
                 detail_emotion = label_map.get(original_label, "neutral")
                 detail_emotions.append(detail_emotion)
-        
+
         # 🔄 감정이 없으면 neutral 추가 (안전장치)
         if not detail_emotions:
             detail_emotions = ["neutral"]
-        
+
         # 🔄 중복 제거 (같은 감정이 여러 번 나올 수 있음)
         # 예: ["joy", "joy", "love"] → ["joy", "love"]
         detail_emotions = list(dict.fromkeys(detail_emotions))
-        
+
         # 🔄 가장 높은 점수의 감정(첫 번째)으로 전체 sentiment_type 결정
         primary_emotion = detail_emotions[0]
         sentiment_type = detail_to_sentiment_map[primary_emotion]
-        
+
         # 카운트 증가
         sentiment_category_counter[sentiment_type] += 1
-        
+
         # 🔄 CommentSentimentDetail 객체 생성 (여러 세부 감정 포함)
         comment_detail = CommentSentimentDetail(
             apiCommentId=cid,
@@ -319,7 +321,7 @@ async def analyze_sentiment_async(
             detailSentimentTypes=[DetailSentimentType(e.upper()) for e in detail_emotions]  # 🔄 리스트로 변환
         )
         sentiment_comments.append(comment_detail)
-    
+
     # ============================================================
     # STEP 6: 긍정/부정/기타 비율 계산
     # ============================================================
@@ -329,11 +331,11 @@ async def analyze_sentiment_async(
         "NEGATIVE": round(sentiment_category_counter.get("NEGATIVE", 0) / total, 2),
         "OTHER": round(sentiment_category_counter.get("OTHER", 0) / total, 2),
     }
-    
+
     # ============================================================
-    # 반환: (CommentSentimentDetail 리스트, 긍정/부정/기타 비율)
+    # 반환: (CommentSentimentDetail 리스트, 비율, 번역된 텍스트)
     # ============================================================
-    return sentiment_comments, sentiment_ratio
+    return sentiment_comments, sentiment_ratio, translated
 
 
 # ============================================================
@@ -344,7 +346,7 @@ if __name__ == "__main__":
     if not VIDEO_KEY:
         print("[ERROR] VIDEO_KEY가 .env 파일에 설정되지 않았습니다.")
         print("[INFO] 테스트 데이터로 실행합니다.")
-        
+
         # 테스트 데이터
         test_comments = {
             "c1": "오늘 정말 행복한 하루였어요!",
@@ -352,16 +354,18 @@ if __name__ == "__main__":
             "c3": "감사합니다",
             "c4": "무섭고 두려워요",
         }
-        sentiment_comments, sentiment_ratio = asyncio.run(analyze_sentiment_async(test_comments))
+        sentiment_comments, sentiment_ratio, translated = asyncio.run(
+            analyze_sentiment_async(test_comments)
+        )
     else:
         if not YOUTUBE_API_KEY:
             print("[ERROR] YOUTUBE_API_KEY가 .env 파일에 설정되지 않았습니다.")
             sys.exit(1)
-        
+
         print(f"\n[INFO] YouTube 비디오 '{VIDEO_KEY}'에서 댓글 수집 중...")
-        
+
         try:
-            # YouTube 댓글 수집 (최대 300개: 3페이지 × 100개)
+            # YouTube 댓글 수집 (최대 100개)
             youtube_comments = fetch_youtube_comment_map(
                 video_id=VIDEO_KEY,
                 api_key=YOUTUBE_API_KEY,
@@ -370,20 +374,22 @@ if __name__ == "__main__":
                 include_replies=False, # 대댓글 제외
                 apply_cleaning=True,   # 텍스트 전처리 적용
             )
-            
+
             print(f"[SUCCESS] {len(youtube_comments)}개 댓글 수집 완료!")
-            
+
             if not youtube_comments:
                 print("[WARNING] 수집된 댓글이 없습니다.")
                 sys.exit(0)
-            
+
             # 감정 분석 실행
-            sentiment_comments, sentiment_ratio = asyncio.run(analyze_sentiment_async(youtube_comments))
-            
+            sentiment_comments, sentiment_ratio, translated = asyncio.run(
+                analyze_sentiment_async(youtube_comments)
+            )
+
         except Exception as e:
             print(f"[ERROR] 댓글 수집 실패: {e}")
             sys.exit(1)
-    
+
     # ============================================================
     # 결과 출력
     # ============================================================
@@ -397,7 +403,7 @@ if __name__ == "__main__":
         print(f"     세부 감정: {[d.value for d in comment.detailSentimentTypes]}")  # 🔄 여러 감정 표시
     if len(sentiment_comments) > 5:
         print(f"  ... (총 {len(sentiment_comments)}개 댓글)")
-    
+
     print("\n" + "=" * 60)
     print("[통계] 긍정/부정/기타 비율:")
     print("=" * 60)
