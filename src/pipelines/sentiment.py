@@ -44,11 +44,11 @@ warnings.filterwarnings("ignore", message=".*symlink.*")
 project_root = Path(__file__).parent.parent.parent  # capstone-ai 디렉토리
 sys.path.insert(0, str(project_root))
 
-import asyncio # 비동기 모듈, fast api랑 연결하기 위해 지정함
-from collections import Counter # 개수 count
-from typing import Dict, List, Tuple, Union # 타입 힌팅을 위한 도구들
+import asyncio  # 비동기 모듈, fast api랑 연결하기 위해 지정함
+from collections import Counter  # 개수 count
+from typing import Dict, List, Tuple, Union  # 타입 힌팅을 위한 도구들
 
-import torch # 딥러닝 프레임워크, 신경망 모델 학습 및 실행할 때 사용됨.
+import torch  # 딥러닝 프레임워크, 신경망 모델 학습 및 실행할 때 사용됨.
 import httpx
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 
@@ -269,13 +269,13 @@ async def analyze_sentiment_async(
 
     # 7개 감정을 POSITIVE/NEGATIVE/OTHER로 매핑
     detail_to_sentiment_map = {
-        "joy": "POSITIVE",
-        "love": "POSITIVE",
-        "gratitude": "POSITIVE",
-        "anger": "NEGATIVE",
-        "sadness": "NEGATIVE",
-        "fear": "NEGATIVE",
-        "neutral": "OTHER",
+        "joy": "positive",
+        "love": "positive",
+        "gratitude": "positive",
+        "anger": "negative",
+        "sadness": "negative",
+        "fear": "negative",
+        "neutral": "other",
     }
 
     # ============================================================
@@ -327,9 +327,9 @@ async def analyze_sentiment_async(
     # ============================================================
     total = max(sum(sentiment_category_counter.values()), 1)
     sentiment_ratio = {
-        "POSITIVE": round(sentiment_category_counter.get("POSITIVE", 0) / total, 2),
-        "NEGATIVE": round(sentiment_category_counter.get("NEGATIVE", 0) / total, 2),
-        "OTHER": round(sentiment_category_counter.get("OTHER", 0) / total, 2),
+        "positive": round(sentiment_category_counter.get("positive", 0) / total * 100, 2),
+        "negative": round(sentiment_category_counter.get("negative", 0) / total * 100, 2),
+        "other": round(sentiment_category_counter.get("other", 0) / total * 100, 2),
     }
 
     # ============================================================
