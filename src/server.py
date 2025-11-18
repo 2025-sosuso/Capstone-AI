@@ -121,11 +121,11 @@ async def safe_detect_languages(comment_texts: List[str]):
 
     except asyncio.TimeoutError:
         logger.error("[언어 감지] 타임아웃 (20초)")
-        return {"한국어": 100.0}
+        return {"ko": 100}
 
     except Exception as e:
         logger.error(f"[언어 감지] 에러: {e}", exc_info=True)
-        return {"한국어": 100.0}
+        return {"ko": 100}
 
 
 async def safe_check_controversy(translated_texts: List[str]):
