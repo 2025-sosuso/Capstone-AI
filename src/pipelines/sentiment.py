@@ -327,9 +327,9 @@ async def analyze_sentiment_async(
     # ============================================================
     total = max(sum(sentiment_category_counter.values()), 1)
     sentiment_ratio = {
-        "positive": round(sentiment_category_counter.get("positive", 0) / total * 100, 2),
-        "negative": round(sentiment_category_counter.get("negative", 0) / total * 100, 2),
-        "other": round(sentiment_category_counter.get("other", 0) / total * 100, 2),
+        "positive": round(sentiment_category_counter.get("positive", 0) / total * 100),
+        "negative": round(sentiment_category_counter.get("negative", 0) / total * 100),
+        "other": round(sentiment_category_counter.get("other", 0) / total * 100),
     }
 
     # ============================================================
