@@ -78,11 +78,11 @@ async def safe_analyze_sentiment(comments_dict: Dict[str, str]):
 
     except asyncio.TimeoutError:
         logger.error("[감정 분석] 타임아웃 (90초)")
-        return [], {"POSITIVE": 33.3, "NEGATIVE": 33.3, "OTHER": 33.4}, []
+        return [], {"positive": 33, "negative": 33, "other": 34}, []
 
     except Exception as e:
         logger.error(f"[감정 분석] 에러: {e}", exc_info=True)
-        return [], {"POSITIVE": 33.3, "NEGATIVE": 33.3, "OTHER": 33.4}, []
+        return [], {"positive": 33, "negative": 33, "other": 34}, []
 
 
 async def safe_extract_keywords(comment_texts: List[str], top_n: int = 5):
@@ -121,11 +121,11 @@ async def safe_detect_languages(comment_texts: List[str]):
 
     except asyncio.TimeoutError:
         logger.error("[언어 감지] 타임아웃 (20초)")
-        return {"한국어": 100.0}
+        return {"ko": 100}
 
     except Exception as e:
         logger.error(f"[언어 감지] 에러: {e}", exc_info=True)
-        return {"한국어": 100.0}
+        return {"ko": 100}
 
 
 async def safe_check_controversy(translated_texts: List[str]):
@@ -233,9 +233,9 @@ async def analyze(request: AnalysisRequest):
 
         (sentiment_comments, sentiment_ratio, translated_texts), keywords, language_ratio = results
 
-        logger.info(f"감정 분석 완료: 긍정 {sentiment_ratio.get('POSITIVE', 0):.1f}%, "
-                    f"부정 {sentiment_ratio.get('NEGATIVE', 0):.1f}%, "
-                    f"기타 {sentiment_ratio.get('OTHER', 0):.1f}%")
+        logger.info(f"감정 분석 완료: 긍정 {sentiment_ratio.get('positive', 0)}%, "
+                    f"부정 {sentiment_ratio.get('negative', 0)}%, "
+                    f"기타 {sentiment_ratio.get('other', 0)}%")
         logger.info(f"키워드 추출 완료: {len(keywords)}개")
         logger.info(f"언어 감지 완료: {language_ratio}")
 
@@ -262,8 +262,8 @@ async def analyze(request: AnalysisRequest):
             video_id_int = hash(video_id) % 1000000  # 해시값 사용
 
         response = AIAnalysisResponse(
-            videoId=video_id_int,  # int 타입으로 변환
-            apiVideoId=video_id,  # 원본 string 유지
+            videoId=video_id_int,
+            apiVideoId=video_id,
             summation=summary,
             isWarning=is_warning,
             keywords=keywords,
@@ -275,9 +275,9 @@ async def analyze(request: AnalysisRequest):
         logger.info("=" * 70)
         logger.info("[분석 완료]")
         logger.info("=" * 70)
-        logger.info(f"긍정: {sentiment_ratio.get('POSITIVE', 0):.1f}%")
-        logger.info(f"부정: {sentiment_ratio.get('NEGATIVE', 0):.1f}%")
-        logger.info(f"기타: {sentiment_ratio.get('OTHER', 0):.1f}%")
+        logger.info(f"긍정: {sentiment_ratio.get('positive', 0)}%")
+        logger.info(f"부정: {sentiment_ratio.get('negative', 0)}%")
+        logger.info(f"기타: {sentiment_ratio.get('other', 0)}%")
         logger.info(f"키워드: {', '.join(keywords)}")
         logger.info(f"논란: {'감지됨' if is_warning else '없음'}")
         logger.info(f"요약: {summary[:50]}...")
