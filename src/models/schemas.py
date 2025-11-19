@@ -33,6 +33,6 @@ class AIAnalysisResponse(BaseModel):
     isWarning: bool
     keywords: List[str]
     sentimentComments: List[CommentSentimentDetail]
-    languageRatio: Dict[str, float]
-    sentimentRatio: Dict[str, float]
+    languageRatio: Dict[str, int]
+    sentimentRatio: Dict[str, int]
 
