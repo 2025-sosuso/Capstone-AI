@@ -4,6 +4,7 @@
 - facebook/bart-large-mnli (safetensors, GPU 자동)
 - 비영어 텍스트는 선택적 번역
 - 빈 문자열/짧은 문자열 필터 + 배치 추론 + 예외 가드
+- 논란 레이블 세분화: 사기 의혹, 뒷광고 논란, 허위정보/조작
 """
 from __future__ import annotations
 
@@ -54,8 +55,12 @@ except ImportError:
     from ..utils.youtube import fetch_youtube_comments
 
 _MNAME = "facebook/bart-large-mnli"
-_labels = ["controversial", "non-controversial"]
-_hypo = "This text is {}."
+_labels = [
+    "direct accusation: this is fraud, scam, or undisclosed paid promotion",  # 사기/뒷광고 통합
+    "general comment, opinion, or complaint"  # 일반 댓글
+]
+_hypo = "This comment is: {}."  # 단순화
+_controversy_labels = _labels[:1]  # 첫 번째만 논란 레이블
 
 _tok = None
 _model = None
@@ -82,6 +87,32 @@ def _get_classifier():
     return _clf
 
 
+def _is_english(text: str) -> bool:
+    cleaned = re.sub(r"[^\w\s.,!?\'\"-]", "", text or "")
+    return bool(re.fullmatch(r"[A-Za-z0-9\s\.,;:'\"!?()\[\]{}@#$%^&*_\-=+/<>|~]+", cleaned))
+
+
+async def _translate_to_en_batch(texts: List[str]) -> List[str]:
+    """DeepL로 일괄 번역(키 없으면 원문 반환). 네트워크 이슈 시 원문 사용."""
+    if not DEEPL_API_KEY:
+        return texts
+    url = "https://api.deepl.com/v2/translate"
+    out: List[str] = []
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        for t in texts:
+            if _is_english(t):
+                out.append(t)
+                continue
+            data = {"auth_key": DEEPL_API_KEY, "text": t, "target_lang": "EN"}
+            try:
+                r = await client.post(url, data=data)
+                r.raise_for_status()
+                out.append(r.json()["translations"][0]["text"])
+            except Exception:
+                out.append(t)
+    return out
+
+
 def _clean_and_filter(texts: List[str]) -> List[str]:
     """공백/너무 짧은 항목 제거 (파이프라인 빈 입력 방지)"""
     cleaned = [(t or "").strip() for t in texts]
@@ -89,9 +120,10 @@ def _clean_and_filter(texts: List[str]) -> List[str]:
     return cleaned
 
 
-async def _controversy_scores_batch(texts: List[str]) -> List[float]:
+async def _controversy_scores_batch(texts: List[str], debug: bool = False) -> List[float]:
     """
-    배치로 논란 점수(0~1) 계산: label='controversial'의 score 반환.
+    배치로 논란 점수(0~1) 계산:
+    처음 3개 레이블(논란 카테고리) 중 최대 점수 반환.
     빈 입력이 오면 빈 리스트 반환(예외 방지).
     """
     seqs = _clean_and_filter(texts)
@@ -105,27 +137,47 @@ async def _controversy_scores_batch(texts: List[str]) -> List[float]:
             candidate_labels=_labels,
             hypothesis_template=_hypo,
             batch_size=16,  # GPU 효율 ↑
-            multi_label=False,  # 둘 중 하나를 선택
+            multi_label=False,  # ⭐ 하나만 선택 (가장 적합한 레이블)
         )
     except ValueError as e:
         # "at least one label and at least one sequence"류 예외 방지 가드
+        print(f"[ERROR] ValueError in classification: {e}")
         return []
 
     scores: List[float] = []
-    for out in outputs:
-        # out["labels"]는 ['controversial','non-controversial'] 순서가 아닐 수 있음
+
+    for idx, out in enumerate(outputs):
         lbls = out.get("labels", [])
         scrs = out.get("scores", [])
-        score = 0.0
-        for lbl, sc in zip(lbls, scrs):
-            if lbl == "controversial":
-                score = float(sc)
-                break
-        scores.append(score)
+
+        # 🔍 디버깅: 각 댓글의 레이블별 점수 출력
+        if debug:
+            print(f"\n[DEBUG] 댓글 #{idx + 1}: {seqs[idx][:50]}...")
+            print(f"  레이블별 점수:")
+            for lbl, sc in zip(lbls, scrs):
+                controversy_mark = "⚠️" if lbl in _controversy_labels else "✅"
+                print(f"    {controversy_mark} {lbl}: {sc:.4f}")
+
+        # ⭐ multi_label=False: 가장 높은 점수의 레이블(첫 번째)만 확인
+        top_label = lbls[0] if lbls else ""
+        top_score = scrs[0] if scrs else 0.0
+
+        # 최고 점수 레이블이 논란 카테고리인지 확인
+        if top_label in _controversy_labels:
+            controversy_score = float(top_score)
+        else:
+            controversy_score = 0.0  # 일반 의견으로 분류됨
+
+        if debug:
+            print(f"  → 최고 레이블: {top_label}")
+            print(f"  → 최종 논란 점수: {controversy_score:.4f}")
+
+        scores.append(controversy_score)
+
     return scores
 
 
-async def is_video_controversial(comments: List[str], ratio_threshold: float = 0.10) -> bool:
+async def is_video_controversial(comments: List[str], ratio_threshold: float = 0.20, debug: bool = False) -> bool:
     """
     영상 전체에서 'controversial' 비율이 ratio_threshold 이상이면 True
     """
@@ -133,12 +185,25 @@ async def is_video_controversial(comments: List[str], ratio_threshold: float = 0
         return False
 
     # 배치 추론로 변경
-    scores = await _controversy_scores_batch(comments)
+    scores = await _controversy_scores_batch(comments, debug=debug)
     if not scores:
         return False
 
-    flagged = sum(1 for s in scores if s >= 0.7)  # 임계값: 0.7
+    flagged = sum(1 for s in scores if s >= 0.35)  # ⭐ 임계값: 0.35 (사기 의혹 점수 반영)
     ratio = flagged / max(1, len(scores))
+
+    # 🔍 디버깅: 전체 통계 출력
+    if debug:
+        print(f"\n{'=' * 60}")
+        print(f"[DEBUG] 논란 감지 통계")
+        print(f"{'=' * 60}")
+        print(f"  전체 댓글 수: {len(scores)}개")
+        print(f"  논란 댓글 수: {flagged}개 (임계값 >= 0.35)")
+        print(f"  논란 비율: {ratio * 100:.1f}%")
+        print(f"  임계값: {ratio_threshold * 100:.1f}%")
+        print(f"  결과: {'⚠️ 논란 있음 (True)' if ratio >= ratio_threshold else '✅ 정상 (False)'}")
+        print(f"{'=' * 60}\n")
+
     return ratio >= ratio_threshold
 
 
@@ -167,7 +232,7 @@ if __name__ == "__main__":
             "구독하고 갑니다~",
         ]
 
-        result1 = asyncio.run(is_video_controversial(peaceful_comments, ratio_threshold=0.10))
+        result1 = asyncio.run(is_video_controversial(peaceful_comments, ratio_threshold=0.20, debug=True))
         print(f"  댓글 수: {len(peaceful_comments)}개")
         print(f"  논란 여부: {'⚠️ 경고 (True)' if result1 else '✅ 정상 (False)'}")
         print()
@@ -182,9 +247,11 @@ if __name__ == "__main__":
             "이건 명백한 사기 행위입니다.",
             "신고했습니다.",
             "사람들 속이지 마세요.",
+            "뒷광고 아닌가요?",
+            "협찬 받고 거짓말 하시네요.",
         ]
 
-        result2 = asyncio.run(is_video_controversial(controversial_comments, ratio_threshold=0.10))
+        result2 = asyncio.run(is_video_controversial(controversial_comments, ratio_threshold=0.20, debug=True))
         print(f"  댓글 수: {len(controversial_comments)}개")
         print(f"  논란 여부: {'⚠️ 경고 (True)' if result2 else '✅ 정상 (False)'}")
         print()
@@ -202,9 +269,24 @@ if __name__ == "__main__":
             "좋아요 눌렀어요!",
         ]
 
-        result3 = asyncio.run(is_video_controversial(mixed_comments, ratio_threshold=0.10))
+        result3 = asyncio.run(is_video_controversial(mixed_comments, ratio_threshold=0.20, debug=True))
         print(f"  댓글 수: {len(mixed_comments)}개")
         print(f"  논란 여부: {'⚠️ 경고 (True)' if result3 else '✅ 정상 (False)'}")
+        print()
+
+        # 테스트 데이터 4: 단순 부정적 댓글들 (논란 아님)
+        print("[테스트 4] 단순 부정적 댓글들 (논란 아님)")
+        negative_comments = [
+            "별로네요.",
+            "지루해요.",
+            "재미없어요.",
+            "별로 유익하지 않은 것 같아요.",
+            "기대 이하였습니다.",
+        ]
+
+        result4 = asyncio.run(is_video_controversial(negative_comments, ratio_threshold=0.20, debug=True))
+        print(f"  댓글 수: {len(negative_comments)}개")
+        print(f"  논란 여부: {'⚠️ 경고 (True)' if result4 else '✅ 정상 (False)'}")
         print()
 
         print("=" * 60)
@@ -237,18 +319,12 @@ if __name__ == "__main__":
                 print("[WARNING] 수집된 댓글이 없습니다.")
                 sys.exit(0)
 
-            # # 댓글 샘플 출력 (처음 3개)
-            # print("[샘플 댓글 미리보기]")
-            # for i, comment in enumerate(youtube_comments[:3], 1):
-            #     preview = comment[:50] + "..." if len(comment) > 50 else comment
-            #     print(f"  {i}. {preview}")
-            # print()
-
             # 논란 탐지 실행
             print("[2/2] 논란 댓글 탐지 중...")
             is_controversial = asyncio.run(is_video_controversial(
                 youtube_comments,
-                ratio_threshold=0.10  # 10% 이상의 댓글이 논란이면 경고
+                ratio_threshold=0.20,  # 20% 이상의 댓글이 논란이면 경고
+                debug=True  # 🔍 디버깅 모드 활성화
             ))
 
             # ============================================================
@@ -263,10 +339,10 @@ if __name__ == "__main__":
 
             if is_controversial:
                 print("\n  ⚠️  이 영상은 논란이 있는 것으로 판단됩니다.")
-                print("      댓글 중 10% 이상이 논쟁적인 내용을 포함하고 있습니다.")
+                print("      댓글 중 20% 이상이 사기 의혹, 뒷광고, 허위정보 등을 제기하고 있습니다.")
             else:
                 print("\n  ✅  이 영상은 논란이 없는 것으로 판단됩니다.")
-                print("      댓글 대부분이 평화롭고 긍정적입니다.")
+                print("      댓글 대부분이 평화롭고 건전합니다.")
 
             print("=" * 60)
 

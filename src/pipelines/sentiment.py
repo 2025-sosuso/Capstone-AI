@@ -29,8 +29,9 @@ if sys.platform == 'win32':
     # 3. Windows 콘솔 코드 페이지를 UTF-8로 설정
     try:
         import subprocess
-        subprocess.run(['chcp', '65001'], shell=True, 
-                      capture_output=True, check=False)
+
+        subprocess.run(['chcp', '65001'], shell=True,
+                       capture_output=True, check=False)
     except Exception:
         pass
 
@@ -60,7 +61,7 @@ try:
     from src.utils.youtube import fetch_youtube_comment_map  # YouTube 댓글 수집 함수
     from src.models.schemas import CommentSentimentDetail, SentimentType, DetailSentimentType  # Pydantic 모델
 except ImportError:
-    from ..config import DEEPL_API_KEY, YOUTUBE_API_KEY, VIDEO_KEY    # 패키지 내부에서 실행할 때
+    from ..config import DEEPL_API_KEY, YOUTUBE_API_KEY, VIDEO_KEY  # 패키지 내부에서 실행할 때
     from ..utils.youtube import fetch_youtube_comment_map
     from ..models.schemas import CommentSentimentDetail, SentimentType, DetailSentimentType
 
@@ -86,25 +87,25 @@ def _get_sentiment_pipeline():
     반환: transformers의 pipeline 객체
     """
     global _tok, _model, _pipe
-    
+
     # 이미 로드되어 있으면 그대로 반환
     if _pipe is None:
         print("[INFO] GoEmotions 모델 로딩 중...")
-        
+
         # 토크나이저 로드: 텍스트를 모델이 이해할 수 있는 숫자로 변환
         _tok = AutoTokenizer.from_pretrained(_MNAME)
-        
+
         # 모델 로드: 실제 감정 분류를 수행하는 신경망
         _model = AutoModelForSequenceClassification.from_pretrained(_MNAME)
-        
+
         # 🔄 변경됨: top_k=1 → top_k=3 (여러 감정 반환)
         # 파이프라인 생성: 전처리→모델 예측→후처리를 한번에
         _pipe = pipeline(
-            task="text-classification",           # 감정 분석 작업
-            model=_model,                         # 위에서 로드한 모델
-            tokenizer=_tok,                       # 위에서 로드한 토크나이저
+            task="text-classification",  # 감정 분석 작업
+            model=_model,  # 위에서 로드한 모델
+            tokenizer=_tok,  # 위에서 로드한 토크나이저
             device=0 if torch.cuda.is_available() else -1,  # GPU 있으면 0번 GPU 사용, 없으면 CPU(-1)
-            top_k=3,                              # 🔄 상위 3개 감정 반환 (기존: top_k=1)
+            top_k=3,  # 🔄 상위 3개 감정 반환 (기존: top_k=1)
         )
         print("[SUCCESS] GoEmotions 모델 로딩 완료!")
         print(f"[INFO] 라벨 개수: {len(_model.config.id2label)}개")
@@ -114,7 +115,9 @@ def _get_sentiment_pipeline():
 
 async def _translate_to_english(text: str) -> str:
     """
-    한국어를 영어로 번역 (DeepL API 사용)
+    한국어를 영어로 번역 (DeepL API 사용) - 단일 텍스트
+
+    ⚠️ 권장하지 않음: 여러 댓글을 번역할 때는 translate_comments_batch를 사용하세요!
 
     Args:
         text: 번역할 한국어 텍스트
@@ -144,9 +147,39 @@ async def _translate_to_english(text: str) -> str:
             return text
 
 
+# ============================================================
+# ⭐ 배치 번역 함수 (export용)
+# ============================================================
+async def translate_comments_batch(texts: List[str]) -> List[str]:
+    """
+    댓글들을 배치로 번역 (DeepL API 사용)
+
+    ✨ 이 함수는 server.py에서 Phase 0에서 호출되어 한 번만 번역을 수행합니다.
+
+    Args:
+        texts: 번역할 텍스트 리스트
+
+    Returns:
+        번역된 텍스트 리스트 (실패 시 원문 반환)
+    """
+    if not DEEPL_API_KEY:
+        print("[WARNING] DeepL API 키가 없어 번역 생략")
+        return texts
+
+    print(f"[INFO] {len(texts)}개 댓글 병렬 번역 중...")
+
+    # 병렬 번역 (asyncio.gather 사용)
+    tasks = [_translate_to_english(t) for t in texts]
+    translated = await asyncio.gather(*tasks)
+
+    print(f"[INFO] 번역 완료!")
+
+    return list(translated)
+
+
 # 어떤 형태로 유튜브 댓글을 넣어도 tuple로 normalize 해주는 함수
 def _normalize_input(
-    comments: Union[Dict[str, str], List[Tuple[str, str]], List[str]]
+        comments: Union[Dict[str, str], List[Tuple[str, str]], List[str]]
 ) -> Tuple[List[str], List[str]]:
     """
     다양한 형태의 입력을 통일된 형태로 변환
@@ -187,27 +220,27 @@ def _normalize_input(
 
 
 async def analyze_sentiment_async(
-        comments_dict: Union[Dict[str, str], List[Tuple[str, str]], List[str]]
-) -> Tuple[List[CommentSentimentDetail], Dict[str, float]]:
+        comments_dict: Union[Dict[str, str], List[Tuple[str, str]], List[str]],
+        translated_texts: List[str] = None  # ⭐ 새로 추가된 파라미터
+) -> Tuple[List[CommentSentimentDetail], Dict[str, float], List[str]]:
     """
     댓글들의 감정을 분석하는 비동기 함수
 
     입력:
-      - Dict[commentId, text]: 댓글 ID와 텍스트 쌍의 딕셔너리
-      - List[Tuple[commentId, text]]: 댓글 ID와 텍스트 튜플의 리스트
-      - List[text]: 텍스트만 있는 리스트
+      - comments_dict: 댓글 데이터 (Dict/List 형태)
+      - translated_texts: (선택) 이미 번역된 텍스트 리스트 ⭐ 중복 번역 방지!
 
     출력:
       - (CommentSentimentDetail 리스트, 긍정/부정/기타 비율, 번역된 텍스트 리스트)
 
     처리 과정:
     1. 입력을 표준 형태로 변환
-    2. 한국어 → 영어 병렬 번역 (DeepL)
+    2. 한국어 → 영어 번역 (이미 번역된 경우 생략!) ⭐
     3. 모델을 사용해 각 댓글의 감정 예측 (GoEmotions 28개 중 상위 3개)
     4. GoEmotions의 28개 감정 → 7개 감정으로 그룹핑
     5. 7개 감정을 POSITIVE/NEGATIVE/OTHER로 분류
     6. CommentSentimentDetail 객체 리스트 생성
-    7. 번역된 텍스트 반환 (논란 감지에서 재사용)
+    7. 번역된 텍스트 반환
     """
     # ============================================================
     # STEP 1: 입력 정규화
@@ -219,22 +252,25 @@ async def analyze_sentiment_async(
         return [], {}, []
 
     # ============================================================
-    # STEP 2: 한국어 → 영어 병렬 번역
+    # STEP 2: 번역 (이미 번역되었으면 생략!) ⭐ 핵심 최적화
     # ============================================================
-    print(f"[INFO] {len(texts)}개 댓글 병렬 번역 중...")
-
-    # 병렬 번역 (asyncio.gather 사용)
-    tasks = [_translate_to_english(t) for t in texts]
-    translated = await asyncio.gather(*tasks)
-
-    print(f"[INFO] 번역 완료!")
+    if translated_texts is None:
+        # 번역된 텍스트가 없으면 직접 번역
+        print(f"[INFO] {len(texts)}개 댓글 병렬 번역 중...")
+        tasks = [_translate_to_english(t) for t in texts]
+        translated = await asyncio.gather(*tasks)
+        print(f"[INFO] 번역 완료!")
+    else:
+        # 번역된 텍스트가 제공됨 (재사용)
+        print(f"[INFO] ✨ 번역된 텍스트 재사용 ({len(translated_texts)}개)")
+        translated = translated_texts
 
     # ============================================================
     # STEP 3: GoEmotions 예측 (28개 감정 중 상위 3개)
     # ============================================================
     pipe = _get_sentiment_pipeline()
     results = pipe(translated, batch_size=64)  # 64개씩 배치로 처리 (속도 향상)
-    
+
     # ============================================================
     # STEP 4: GoEmotions 28개 → 프로젝트 7개 감정으로 매핑
     # ============================================================
@@ -293,8 +329,8 @@ async def analyze_sentiment_async(
             original_label = pred["label"]
             score = pred["score"]
 
-            # 🔄 확률이 20% 이상인 감정만 포함 (임계값)
-            if score >= 0.15: # 감정이 1개 씩만 나와서 0.2 -> 0.15 로 바꿈
+            # 🔄 확률이 15% 이상인 감정만 포함 (임계값)
+            if score >= 0.15:
                 detail_emotion = label_map.get(original_label, "neutral")
                 detail_emotions.append(detail_emotion)
 
@@ -369,10 +405,10 @@ if __name__ == "__main__":
             youtube_comments = fetch_youtube_comment_map(
                 video_id=VIDEO_KEY,
                 api_key=YOUTUBE_API_KEY,
-                max_pages=1,           # 1페이지 -> 시간 오래걸려서 3페이지에서 1페이지로 바꿈
-                page_size=100,         # 페이지당 100개
-                include_replies=False, # 대댓글 제외
-                apply_cleaning=True,   # 텍스트 전처리 적용
+                max_pages=1,  # 1페이지 -> 시간 오래걸려서 3페이지에서 1페이지로 바꿈
+                page_size=100,  # 페이지당 100개
+                include_replies=False,  # 대댓글 제외
+                apply_cleaning=True,  # 텍스트 전처리 적용
             )
 
             print(f"[SUCCESS] {len(youtube_comments)}개 댓글 수집 완료!")
