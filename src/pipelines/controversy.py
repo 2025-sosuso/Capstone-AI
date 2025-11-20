@@ -10,8 +10,7 @@ from __future__ import annotations
 
 import os
 import sys
-import re
-from typing import List, Tuple
+from typing import List
 
 # ============================================================
 # Windows 한글 깨짐 방지 (최상단 배치)
@@ -42,7 +41,6 @@ if sys.platform == 'win32':
     except Exception:
         pass
 
-import httpx
 import torch
 from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline
 
@@ -131,9 +129,6 @@ async def _controversy_scores_batch(texts: List[str], debug: bool = False) -> Li
     seqs = _clean_and_filter(texts)
     if not seqs:
         return []
-
-    # 번역(선택)
-    seqs = await _translate_to_en_batch(seqs)
 
     clf = _get_classifier()
     try:

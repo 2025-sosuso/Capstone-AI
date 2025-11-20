@@ -201,7 +201,7 @@
 """
 [기능4] 언어 비율 분석
 - langdetect 사용
-- 결과를 언어 코드로 반환 (비율: 0~1)
+- 결과를 언어 코드로 반환 (비율: 0~100)
 """
 import os
 import sys
@@ -251,12 +251,12 @@ except ImportError:
 
 def detect_languages(comments: List[str]) -> Dict[str, float]:
     """
-    댓글 리스트의 언어 비율(0~1)을 반환.
+    댓글 리스트의 언어 비율(%)을 반환.
     - 매우 짧은 텍스트는 건너뜀.
     
     반환:
-        Dict[str, float]: 언어 코드와 비율 (0~1) (AIAnalysisResponse의 languageRatio 필드)
-        예: {"ko": 0.95, "en": 0.05}
+        Dict[str, float]: 언어 코드와 퍼센트(0~100) (AIAnalysisResponse의 languageRatio 필드)
+        예: {"ko": 95, "en": 5}
     """
     langs = []
     for c in comments:
@@ -275,7 +275,7 @@ def detect_languages(comments: List[str]) -> Dict[str, float]:
     total = sum(cnt.values()) or 1
     out: Dict[str, float] = {}
     for code, n in cnt.items():
-        ratio = round(n / total, 2)  # 0~1 사이 비율, 소수점 2자리
+        ratio = round(n / total * 100)
         if ratio > 0:
             out[code] = ratio
     return out
