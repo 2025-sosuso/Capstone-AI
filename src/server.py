@@ -54,6 +54,17 @@ class AnalysisRequest(BaseModel):
     videoId: str  # YouTube 비디오 ID (예: "dQw4w9WgXcQ")
     comments: Dict[str, str]  # {댓글ID: 댓글내용}
 
+    예시:
+    {
+      "videoId": "dQw4w9WgXcQ",
+      "comments": {
+        "comment_001": "정말 유익한 영상이네요!",
+        "comment_002": "최악이에요"
+      }
+    }
+    """
+    videoId: str  # YouTube 비디오 ID (예: "dQw4w9WgXcQ")
+    comments: Dict[str, str]  # {댓글ID: 댓글내용}
 
 # ============================================================
 # FastAPI 앱 생성
@@ -318,7 +329,7 @@ async def analyze(request: AnalysisRequest):
             summation=summary,
             isWarning=is_warning,
             keywords=keywords,
-            sentimentComments=sentiment_comments,
+            sentimentComments=sentiment_comments,  # ✅ List[CommentSentimentDetail]
             languageRatio=language_ratio,
             sentimentRatio=sentiment_ratio,
         )
