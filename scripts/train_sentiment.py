@@ -1,0 +1,1 @@
+# ko-emotions model 학습 시키는 파일
