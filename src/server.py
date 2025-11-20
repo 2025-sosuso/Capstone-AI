@@ -153,19 +153,19 @@ async def safe_check_controversy(translated_texts: List[str]):
 
         # 입력 데이터 검증
         if not translated_texts:
-            logger.warning("[논란 감지] ⚠️ 입력 댓글이 비어있음!")
+            logger.warning("[논란 감지] 입력 댓글이 비어있음!")
             return False
 
         is_warning = await asyncio.wait_for(
             is_video_controversial(
                 translated_texts,
                 ratio_threshold=0.20,  # 20% 임계값
-                debug=False  # ✅ 디버깅 모드 비활성화
+                debug=False  # 디버깅 모드 비활성화
             ),
             timeout=60.0
         )
 
-        logger.info(f"[논란 감지] 완료: {'⚠️ 감지됨' if is_warning else '✅ 정상'}")
+        logger.info(f"[논란 감지] 완료: {'감지됨' if is_warning else '정상'}")
         return is_warning
 
     except asyncio.TimeoutError:
@@ -207,7 +207,7 @@ async def analyze(request: AnalysisRequest):
     유튜브 댓글 종합 분석 API
 
     [처리 과정]
-    0. 댓글 번역 (DeepL, 한 번만 실행) ⭐ 개선
+    0. 댓글 번역 (DeepL, 한 번만 실행) - 개선
     1. 감정 분석 (GoEmotions 모델, 번역 결과 재사용)
     2. 댓글 요약 (GPT)
     3. 키워드 추출 (TF-IDF)
@@ -245,10 +245,10 @@ async def analyze(request: AnalysisRequest):
         comment_texts = list(comments_dict.values())
 
         # ============================================================
-        # PHASE 0: 댓글 번역 (한 번만 실행!) ⭐ 핵심 개선
+        # PHASE 0: 댓글 번역 (한 번만 실행!) - 핵심 개선
         # ============================================================
         logger.info("[Phase 0/4] 댓글 번역 중 (DeepL)")
-        logger.info("  ✨ 번역을 한 번만 실행하여 비용 및 시간 절감")
+        logger.info("  번역을 한 번만 실행하여 비용 및 시간 절감")
 
         translated_texts = await translate_comments_batch(comment_texts)
 
@@ -266,7 +266,7 @@ async def analyze(request: AnalysisRequest):
         # PHASE 1: 병렬 분석 (감정 + 키워드 + 언어)
         # ============================================================
         logger.info("[Phase 1/4] 병렬 분석 시작 (감정 + 키워드 + 언어)")
-        logger.info("  ✨ 감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
+        logger.info("  감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
 
         # 감정 분석에 번역된 텍스트 전달
         sentiment_task = safe_analyze_sentiment(comments_dict, translated_texts)
@@ -296,13 +296,13 @@ async def analyze(request: AnalysisRequest):
         logger.info(f"요약 완료: {len(summary)}자")
 
         # ============================================================
-        # PHASE 3: 논란 감지 (Phase 0의 번역 결과 재사용!) ⭐ 핵심 개선
+        # PHASE 3: 논란 감지 (Phase 0의 번역 결과 재사용!) - 핵심 개선
         # ============================================================
         logger.info("[Phase 3/4] 논란 감지 중")
-        logger.info(f"  ✨ Phase 0의 번역 결과 재사용 ({len(translated_texts)}개)")
+        logger.info(f"  Phase 0의 번역 결과 재사용 ({len(translated_texts)}개)")
 
         is_warning = await safe_check_controversy(translated_texts)
-        logger.info(f"논란 감지 완료: {'⚠️ 감지됨' if is_warning else '✅ 정상'}")
+        logger.info(f"논란 감지 완료: {'감지됨' if is_warning else '정상'}")
 
         # ============================================================
         # 최종 응답 생성
@@ -330,7 +330,7 @@ async def analyze(request: AnalysisRequest):
         logger.info(f"부정: {sentiment_ratio.get('negative', 0)}%")
         logger.info(f"기타: {sentiment_ratio.get('other', 0)}%")
         logger.info(f"키워드: {', '.join(keywords)}")
-        logger.info(f"논란: {'⚠️ 감지됨' if is_warning else '✅ 없음'}")
+        logger.info(f"논란: {'감지됨' if is_warning else '없음'}")
         logger.info(f"요약: {summary[:50]}...")
         logger.info("=" * 70)
 
