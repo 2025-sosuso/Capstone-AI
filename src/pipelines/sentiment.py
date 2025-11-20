@@ -354,7 +354,7 @@ async def analyze_sentiment_async(
             apiCommentId=cid,
             content=text,
             sentimentType=SentimentType(sentiment_type),
-            detailSentimentTypes=[DetailSentimentType(e.upper()) for e in detail_emotions]  # 🔄 리스트로 변환
+            detailSentimentTypes=[DetailSentimentType(e) for e in detail_emotions]  # 🔄 리스트로 변환
         )
         sentiment_comments.append(comment_detail)
 

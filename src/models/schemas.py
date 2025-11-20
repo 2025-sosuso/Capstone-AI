@@ -4,21 +4,21 @@ from typing import List, Dict
 from enum import Enum
 
 class SentimentType(str, Enum):
-    POSITIVE = "POSITIVE"
-    NEGATIVE = "NEGATIVE"
-    OTHER = "OTHER"
+    POSITIVE = "positive"
+    NEGATIVE = "negative"
+    OTHER = "other"
 
 class DetailSentimentType(str, Enum):
     # positive
-    JOY = "JOY"
-    LOVE = "LOVE"
-    GRATITUDE = "GRATITUDE"
+    JOY = "joy"
+    LOVE = "love"
+    GRATITUDE = "gratitude"
     # negative
-    ANGER = "ANGER"
-    SADNESS = "SADNESS"
-    FEAR = "FEAR"
+    ANGER = "anger"
+    SADNESS = "sadness"
+    FEAR = "fear"
     # other
-    NEUTRAL = "NEUTRAL"
+    NEUTRAL = "neutral"
 
 class CommentSentimentDetail(BaseModel):
     apiCommentId: str
