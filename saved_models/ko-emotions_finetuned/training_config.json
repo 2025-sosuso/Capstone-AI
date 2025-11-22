@@ -1,0 +1,42 @@
+{
+  "model_name": "monologg/koelectra-base-v3-goemotions",
+  "train_data_path": "C:\\CapstoneDesign\\capstone-ai\\data\\processed\\trainProcessed\\train_processed.csv",
+  "val_data_path": "C:\\CapstoneDesign\\capstone-ai\\data\\processed\\valProcessed\\val_processed.csv",
+  "output_dir": "C:\\CapstoneDesign\\capstone-ai\\saved_models\\ko-emotions_finetuned",
+  "experiment_id": "exp_4_32",
+  "batch_size": 32,
+  "epochs": 4,
+  "learning_rate_encoder": 2e-05,
+  "learning_rate_classifier": 0.001,
+  "max_length": 128,
+  "warmup_steps": 100,
+  "weight_decay": 0.01,
+  "labels": [
+    "joy",
+    "gratitude",
+    "anger",
+    "sadness",
+    "fear",
+    "neutral"
+  ],
+  "best_val_accuracy": 0.6812227074235808,
+  "best_val_f1": 0.6694341740251827,
+  "best_epoch": 3,
+  "trained_at": "2025-11-22 19:12:31",
+  "label2id": {
+    "joy": 0,
+    "gratitude": 1,
+    "anger": 2,
+    "sadness": 3,
+    "fear": 4,
+    "neutral": 5
+  },
+  "id2label": {
+    "0": "joy",
+    "1": "gratitude",
+    "2": "anger",
+    "3": "sadness",
+    "4": "fear",
+    "5": "neutral"
+  }
+}

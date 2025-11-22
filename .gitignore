@@ -29,3 +29,15 @@ Thumbs.db
 wandb/
 mlruns/
 logs/
+
+# 학습된 모델 파일 (용량 큰 파일)
+saved_models/*/pytorch_model.bin
+saved_models/*/model.safetensors
+saved_models/*/*.bin
+
+# 학습 히스토리 (선택)
+saved_models/*/training_history.csv
+
+# 허용: 설정 파일은 커밋
+!saved_models/*/config.json
+!saved_models/*/training_config.json
