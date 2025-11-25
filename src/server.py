@@ -5,6 +5,7 @@ YouTube 댓글 분석 API 서버
 [개선사항]
 - 번역을 Phase 0에서 한 번만 실행 (비용 절감, 속도 향상)
 - 감정 분석과 논란 감지에서 번역 결과 재사용
+- Phase 2와 Phase 3을 병렬 실행 (요약 + 논란 감지 동시 처리)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -61,7 +62,7 @@ class AnalysisRequest(BaseModel):
 app = FastAPI(
     title="YouTube Comment Analyzer",
     description="유튜브 댓글 종합 분석 API",
-    version="2.3.0",  # 번역 최적화 버전
+    version="2.4.0",  # 병렬 처리 최적화 버전
 )
 
 
@@ -207,12 +208,9 @@ async def analyze(request: AnalysisRequest):
     유튜브 댓글 종합 분석 API
 
     [처리 과정]
-    0. 댓글 번역 (DeepL, 한 번만 실행) - 개선
-    1. 감정 분석 (GoEmotions 모델, 번역 결과 재사용)
-    2. 댓글 요약 (GPT)
-    3. 키워드 추출 (TF-IDF)
-    4. 언어 비율 분석
-    5. 논란 감지 (번역 결과 재사용)
+    0. 댓글 번역 (DeepL, 한 번만 실행)
+    1. 감정 분석 (GoEmotions 모델, 번역 결과 재사용) + 키워드 + 언어 (병렬)
+    2. 요약 (GPT) + 논란 감지 (병렬) - 개선!
 
     [입력]
     - videoId: YouTube 비디오 ID
@@ -245,9 +243,9 @@ async def analyze(request: AnalysisRequest):
         comment_texts = list(comments_dict.values())
 
         # ============================================================
-        # PHASE 0: 댓글 번역 (한 번만 실행!) - 핵심 개선
+        # PHASE 0: 댓글 번역 (한 번만 실행!)
         # ============================================================
-        logger.info("[Phase 0/4] 댓글 번역 중 (DeepL)")
+        logger.info("[Phase 0/3] 댓글 번역 중 (DeepL)")
         logger.info("  번역을 한 번만 실행하여 비용 및 시간 절감")
 
         translated_texts = await translate_comments_batch(comment_texts)
@@ -265,7 +263,7 @@ async def analyze(request: AnalysisRequest):
         # ============================================================
         # PHASE 1: 병렬 분석 (감정 + 키워드 + 언어)
         # ============================================================
-        logger.info("[Phase 1/4] 병렬 분석 시작 (감정 + 키워드 + 언어)")
+        logger.info("[Phase 1/3] 병렬 분석 시작 (감정 + 키워드 + 언어)")
         logger.info("  감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
 
         # 감정 분석에 번역된 텍스트 전달
@@ -289,19 +287,18 @@ async def analyze(request: AnalysisRequest):
         logger.info(f"언어 감지 완료: {language_ratio}")
 
         # ============================================================
-        # PHASE 2: 댓글 요약 (GPT)
+        # PHASE 2: 요약 + 논란 감지 병렬 실행 (핵심 개선!)
         # ============================================================
-        logger.info("[Phase 2/4] 댓글 요약 중 (GPT)")
-        summary = await safe_summarize(comment_texts)
+        logger.info("[Phase 2/3] 요약 + 논란 감지 병렬 실행")
+        logger.info("  두 작업을 동시에 처리하여 시간 단축")
+
+        summary, is_warning = await asyncio.gather(
+            safe_summarize(comment_texts),
+            safe_check_controversy(translated_texts),
+            return_exceptions=True
+        )
+
         logger.info(f"요약 완료: {len(summary)}자")
-
-        # ============================================================
-        # PHASE 3: 논란 감지 (Phase 0의 번역 결과 재사용!) - 핵심 개선
-        # ============================================================
-        logger.info("[Phase 3/4] 논란 감지 중")
-        logger.info(f"  Phase 0의 번역 결과 재사용 ({len(translated_texts)}개)")
-
-        is_warning = await safe_check_controversy(translated_texts)
         logger.info(f"논란 감지 완료: {'감지됨' if is_warning else '정상'}")
 
         # ============================================================
