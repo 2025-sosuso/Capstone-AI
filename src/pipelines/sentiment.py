@@ -242,8 +242,9 @@ async def analyze_sentiment_async(
     3. 모델을 사용해 각 댓글의 감정 예측 (GoEmotions 28개 중 상위 3개)
     4. GoEmotions의 28개 감정 → 7개 감정으로 그룹핑
     5. 7개 감정을 POSITIVE/NEGATIVE/OTHER로 분류
-    6. CommentSentimentDetail 객체 리스트 생성
-    7. 번역된 텍스트 반환
+    6. ⭐ neutral과 다른 감정 공존 시 점수 비교하여 하나만 유지
+    7. CommentSentimentDetail 객체 리스트 생성
+    8. 번역된 텍스트 반환
     """
     # ============================================================
     # STEP 1: 입력 정규화
@@ -326,14 +327,14 @@ async def analyze_sentiment_async(
 
     # ============================================================
     # STEP 5: CommentSentimentDetail 리스트 생성
+    # ⭐ neutral과 다른 감정 공존 시 점수 비교 로직 추가
     # ============================================================
     sentiment_comments: List[CommentSentimentDetail] = []
     sentiment_category_counter = Counter()  # POSITIVE/NEGATIVE/OTHER 카운트
 
     for cid, text, result in zip(ids, texts, results):
-        # result는 이제 리스트 (top_k=3이므로 최대 3개)
-        # 각 감정의 확률(score)이 15% 이상인 것만 선택
-        detail_emotions = []
+        # ⭐ 감정과 점수를 함께 저장 (같은 감정은 최고 점수만 유지)
+        emotion_scores = {}
 
         for pred in result:
             original_label = pred["label"]
@@ -342,14 +343,34 @@ async def analyze_sentiment_async(
             # 확률이 15% 이상인 감정만 포함 (임계값)
             if score >= 0.15:
                 detail_emotion = label_map.get(original_label, "neutral")
-                detail_emotions.append(detail_emotion)
+                # 같은 감정이 여러 번 나오면 최고 점수만 유지
+                if detail_emotion not in emotion_scores or score > emotion_scores[detail_emotion]:
+                    emotion_scores[detail_emotion] = score
+
+        # ⭐ neutral과 다른 감정이 함께 있을 때 처리
+        if "neutral" in emotion_scores and len(emotion_scores) > 1:
+            neutral_score = emotion_scores["neutral"]
+            # neutral이 아닌 감정들
+            other_emotions = {k: v for k, v in emotion_scores.items() if k != "neutral"}
+            max_other_score = max(other_emotions.values())
+
+            if max_other_score >= neutral_score:
+                # 다른 감정이 neutral보다 높거나 같으면 → neutral 제거
+                del emotion_scores["neutral"]
+            else:
+                # neutral이 더 높으면 → neutral만 유지
+                emotion_scores = {"neutral": neutral_score}
 
         # 감정이 없으면 neutral 추가 (안전장치)
-        if not detail_emotions:
-            detail_emotions = ["neutral"]
+        if not emotion_scores:
+            emotion_scores = {"neutral": 0.0}
 
-        # 중복 제거 (같은 감정이 여러 번 나올 수 있음)
-        detail_emotions = list(dict.fromkeys(detail_emotions))
+        # 점수 높은 순으로 정렬하여 리스트 생성
+        detail_emotions = sorted(
+            emotion_scores.keys(),
+            key=lambda x: emotion_scores[x],
+            reverse=True
+        )
 
         # 가장 높은 점수의 감정(첫 번째)으로 전체 sentiment_type 결정
         primary_emotion = detail_emotions[0]
