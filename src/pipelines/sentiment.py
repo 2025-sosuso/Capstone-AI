@@ -98,17 +98,20 @@ def _get_sentiment_pipeline():
         # 모델 로드: 실제 감정 분류를 수행하는 신경망
         _model = AutoModelForSequenceClassification.from_pretrained(_MNAME)
 
-        # 🔄 변경됨: top_k=1 → top_k=3 (여러 감정 반환)
-        # 파이프라인 생성: 전처리→모델 예측→후처리를 한번에
+        # ⭐ 파이프라인 생성: truncation, max_length 추가 (토큰 길이 제한)
         _pipe = pipeline(
             task="text-classification",  # 감정 분석 작업
             model=_model,  # 위에서 로드한 모델
             tokenizer=_tok,  # 위에서 로드한 토크나이저
             device=0 if torch.cuda.is_available() else -1,  # GPU 있으면 0번 GPU 사용, 없으면 CPU(-1)
-            top_k=3,  # 🔄 상위 3개 감정 반환 (기존: top_k=1)
+            top_k=3,  # 상위 3개 감정 반환
+            truncation=True,  # ⭐ 추가: 긴 텍스트 자동 자르기
+            max_length=512,   # ⭐ 추가: 최대 512 토큰까지만 처리
+            padding=True      # ⭐ 추가: 배치 처리 시 길이 맞추기
         )
         print("[SUCCESS] GoEmotions 모델 로딩 완료!")
         print(f"[INFO] 라벨 개수: {len(_model.config.id2label)}개")
+        print(f"[INFO] 최대 토큰 길이: 512 (자동 truncation)")
 
     return _pipe
 
@@ -269,7 +272,14 @@ async def analyze_sentiment_async(
     # STEP 3: GoEmotions 예측 (28개 감정 중 상위 3개)
     # ============================================================
     pipe = _get_sentiment_pipeline()
-    results = pipe(translated, batch_size=64)  # 64개씩 배치로 처리 (속도 향상)
+    
+    # ⭐ 이중 안전장치: pipe 호출 시에도 truncation 명시
+    results = pipe(
+        translated, 
+        batch_size=64,        # 64개씩 배치로 처리
+        truncation=True,      # ⭐ 긴 텍스트 자동 자르기
+        max_length=512        # ⭐ 최대 512 토큰
+    )
 
     # ============================================================
     # STEP 4: GoEmotions 28개 → 프로젝트 7개 감정으로 매핑
@@ -315,46 +325,45 @@ async def analyze_sentiment_async(
     }
 
     # ============================================================
-    # 🔄 STEP 5: CommentSentimentDetail 리스트 생성 (변경됨)
+    # STEP 5: CommentSentimentDetail 리스트 생성
     # ============================================================
     sentiment_comments: List[CommentSentimentDetail] = []
     sentiment_category_counter = Counter()  # POSITIVE/NEGATIVE/OTHER 카운트
 
     for cid, text, result in zip(ids, texts, results):
-        # 🔄 변경됨: result는 이제 리스트 (top_k=3이므로 최대 3개)
-        # 각 감정의 확률(score)이 20% 이상인 것만 선택
+        # result는 이제 리스트 (top_k=3이므로 최대 3개)
+        # 각 감정의 확률(score)이 15% 이상인 것만 선택
         detail_emotions = []
 
         for pred in result:
             original_label = pred["label"]
             score = pred["score"]
 
-            # 🔄 확률이 15% 이상인 감정만 포함 (임계값)
+            # 확률이 15% 이상인 감정만 포함 (임계값)
             if score >= 0.15:
                 detail_emotion = label_map.get(original_label, "neutral")
                 detail_emotions.append(detail_emotion)
 
-        # 🔄 감정이 없으면 neutral 추가 (안전장치)
+        # 감정이 없으면 neutral 추가 (안전장치)
         if not detail_emotions:
             detail_emotions = ["neutral"]
 
-        # 🔄 중복 제거 (같은 감정이 여러 번 나올 수 있음)
-        # 예: ["joy", "joy", "love"] → ["joy", "love"]
+        # 중복 제거 (같은 감정이 여러 번 나올 수 있음)
         detail_emotions = list(dict.fromkeys(detail_emotions))
 
-        # 🔄 가장 높은 점수의 감정(첫 번째)으로 전체 sentiment_type 결정
+        # 가장 높은 점수의 감정(첫 번째)으로 전체 sentiment_type 결정
         primary_emotion = detail_emotions[0]
         sentiment_type = detail_to_sentiment_map[primary_emotion]
 
         # 카운트 증가
         sentiment_category_counter[sentiment_type] += 1
 
-        # 🔄 CommentSentimentDetail 객체 생성 (여러 세부 감정 포함)
+        # CommentSentimentDetail 객체 생성 (여러 세부 감정 포함)
         comment_detail = CommentSentimentDetail(
             apiCommentId=cid,
             content=text,
             sentimentType=SentimentType(sentiment_type),
-            detailSentimentTypes=[DetailSentimentType(e) for e in detail_emotions]  # 🔄 리스트로 변환
+            detailSentimentTypes=[DetailSentimentType(e) for e in detail_emotions]
         )
         sentiment_comments.append(comment_detail)
 
@@ -405,7 +414,7 @@ if __name__ == "__main__":
             youtube_comments = fetch_youtube_comment_map(
                 video_id=VIDEO_KEY,
                 api_key=YOUTUBE_API_KEY,
-                max_pages=1,  # 1페이지 -> 시간 오래걸려서 3페이지에서 1페이지로 바꿈
+                max_pages=1,  # 1페이지
                 page_size=100,  # 페이지당 100개
                 include_replies=False,  # 대댓글 제외
                 apply_cleaning=True,  # 텍스트 전처리 적용
@@ -436,7 +445,7 @@ if __name__ == "__main__":
         print(f"  {i}. {comment.apiCommentId}")
         print(f"     내용: {comment.content[:50]}...")
         print(f"     감정 타입: {comment.sentimentType.value}")
-        print(f"     세부 감정: {[d.value for d in comment.detailSentimentTypes]}")  # 🔄 여러 감정 표시
+        print(f"     세부 감정: {[d.value for d in comment.detailSentimentTypes]}")
     if len(sentiment_comments) > 5:
         print(f"  ... (총 {len(sentiment_comments)}개 댓글)")
 
