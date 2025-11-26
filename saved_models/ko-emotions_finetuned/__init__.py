@@ -1,0 +1,1 @@
+# koEmotions model -> fine-tuning 한 모델을 저장하는 곳
