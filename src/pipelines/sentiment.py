@@ -157,7 +157,7 @@ async def translate_comments_batch(texts: List[str]) -> List[str]:
     """
     댓글들을 배치로 번역 (DeepL API 사용)
 
-    ✨ 이 함수는 server.py에서 Phase 0에서 호출되어 한 번만 번역을 수행합니다.
+    ✨ 동시 요청 수를 제한하여 Windows 호환성 확보
 
     Args:
         texts: 번역할 텍스트 리스트
@@ -169,16 +169,22 @@ async def translate_comments_batch(texts: List[str]) -> List[str]:
         print("[WARNING] DeepL API 키가 없어 번역 생략")
         return texts
 
-    print(f"[INFO] {len(texts)}개 댓글 병렬 번역 중...")
+    print(f"[INFO] {len(texts)}개 댓글 번역 중... (동시 최대 30개)")
 
-    # 병렬 번역 (asyncio.gather 사용)
-    tasks = [_translate_to_english(t) for t in texts]
+    # ⭐ 동시에 최대 30개만 요청 (Windows select() 제한 회피)
+    semaphore = asyncio.Semaphore(30)
+
+    async def translate_with_limit(text: str) -> str:
+        async with semaphore:
+            return await _translate_to_english(text)
+
+    # 제한된 병렬 번역
+    tasks = [translate_with_limit(t) for t in texts]
     translated = await asyncio.gather(*tasks)
 
     print(f"[INFO] 번역 완료!")
 
     return list(translated)
-
 
 # 어떤 형태로 유튜브 댓글을 넣어도 tuple로 normalize 해주는 함수
 def _normalize_input(
