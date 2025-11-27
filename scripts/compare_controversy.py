@@ -255,10 +255,10 @@ def calculate_metrics(predictions: List[bool], ground_truth: List[bool]) -> Dict
 # ============================================================
 # 메인 비교 함수
 # ============================================================
-def compare_versions(test_data: List[Tuple[str, bool]]) -> Tuple[List[CommentResult], ComparisonSummary, Dict, Dict]:
+def compare_versions(test_data: List[Tuple[str, bool, str]]) -> Tuple[List[CommentResult], ComparisonSummary, Dict, Dict]:
     """두 버전 비교 실행 (번역 포함)"""
     texts = [t[0] for t in test_data]
-    ground_truth = [t[1] for t in test_data]
+    ground_truth = [t[1] for t in test_data]  # 논란 라벨 (감정 라벨 t[2]는 여기서 미사용)
     
     print(f"\n{'='*70}")
     print(f"[비교 시작] 총 {len(texts)}개 댓글 분석")
@@ -299,7 +299,7 @@ def compare_versions(test_data: List[Tuple[str, bool]]) -> Tuple[List[CommentRes
     
     # 개별 결과 생성
     results = []
-    for i, (text, expected) in enumerate(test_data):
+    for i, (text, expected, _sentiment) in enumerate(test_data):
         results.append(CommentResult(
             text=text,
             translated=translated_texts[i],
@@ -429,7 +429,7 @@ def analyze_by_category(results: List[CommentResult]):
     
     for cat_name, info in CATEGORY_INFO.items():
         start, end = info["range"]
-        is_controversy_cat = info["expected"]
+        is_controversy_cat = info["expected_controversy"]
         
         cat_results = results[start:end]
         
@@ -480,7 +480,7 @@ if __name__ == "__main__":
     
     for cat_name, info in CATEGORY_INFO.items():
         start, end = info["range"]
-        label = "🔴" if info["expected"] else "🟢"
+        label = "🔴" if info["expected_controversy"] else "🟢"
         print(f"       ├─ {label} {cat_name}: {end - start}개")
     
     # 비교 실행
