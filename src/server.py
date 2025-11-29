@@ -184,7 +184,7 @@ async def safe_summarize(comment_texts: List[str]):
 
         summary = await asyncio.wait_for(
             asyncio.to_thread(summarize_comments_with_gpt, comment_texts[:50]),
-            timeout=60.0
+            timeout=120.0
         )
 
         logger.info(f"[요약 생성] 완료: {len(summary)}자")
@@ -202,6 +202,8 @@ async def safe_summarize(comment_texts: List[str]):
 # ============================================================
 # 메인 분석 엔드포인트
 # ============================================================
+# 전역 락 (한 번에 하나의 요청만 처리)
+analysis_lock = asyncio.Lock()
 @app.post("/analyze", response_model=AIAnalysisResponse)
 async def analyze(request: AnalysisRequest):
     """
@@ -219,135 +221,136 @@ async def analyze(request: AnalysisRequest):
     [출력]
     - AIAnalysisResponse: 종합 분석 결과
     """
+    async with analysis_lock:  # ⭐ 이전 요청 끝날 때까지 대기
+        logger.info("=" * 70)
+        logger.info("[새 분석 요청 도착]")
+        logger.info("=" * 70)
+        logger.info(f"비디오 ID: {request.videoId}")
+        logger.info(f"댓글 개수: {len(request.comments)}개")
+        logger.info("=" * 70)
 
-    logger.info("=" * 70)
-    logger.info("[새 분석 요청 도착]")
-    logger.info("=" * 70)
-    logger.info(f"비디오 ID: {request.videoId}")
-    logger.info(f"댓글 개수: {len(request.comments)}개")
-    logger.info("=" * 70)
+        try:
+            # 입력 데이터 검증
+            video_id = request.videoId
+            comments_dict = request.comments
 
-    try:
-        # 입력 데이터 검증
-        video_id = request.videoId
-        comments_dict = request.comments
+            # 댓글이 없으면 에러
+            if not comments_dict:
+                raise HTTPException(
+                    status_code=400,
+                    detail="댓글 데이터가 없습니다."
+                )
 
-        # 댓글이 없으면 에러
-        if not comments_dict:
-            raise HTTPException(
-                status_code=400,
-                detail="댓글 데이터가 없습니다."
+            # 댓글 텍스트만 추출
+            comment_texts = list(comments_dict.values())
+
+            # ============================================================
+            # PHASE 0: 댓글 번역 (한 번만 실행!)
+            # ============================================================
+            logger.info("[Phase 0/3] 댓글 번역 중 (DeepL)")
+            logger.info("  번역을 한 번만 실행하여 비용 및 시간 절감")
+
+            translated_texts = await translate_comments_batch(comment_texts)
+
+            logger.info(f"[번역 완료] {len(translated_texts)}개 댓글")
+            if translated_texts:
+                logger.info(f"[번역 샘플] (처음 2개):")
+                for i, text in enumerate(translated_texts[:2], 1):
+                    preview = text[:50] + "..." if len(text) > 50 else text
+                    logger.info(f"  {i}. {preview}")
+            else:
+                logger.warning("[번역 실패] 원본 텍스트 사용")
+                translated_texts = comment_texts  # 번역 실패 시 원본 사용
+
+            # ============================================================
+            # PHASE 1: 병렬 분석 (감정 + 키워드 + 언어)
+            # ============================================================
+            logger.info("[Phase 1/3] 병렬 분석 시작 (감정 + 키워드 + 언어)")
+            logger.info("  감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
+
+            # 감정 분석에 번역된 텍스트 전달
+            sentiment_task = safe_analyze_sentiment(comments_dict, translated_texts)
+            keywords_task = safe_extract_keywords(comment_texts, top_n=5)
+            language_task = safe_detect_languages(comment_texts)
+
+            results = await asyncio.gather(
+                sentiment_task,
+                keywords_task,
+                language_task,
+                return_exceptions=True
             )
 
-        # 댓글 텍스트만 추출
-        comment_texts = list(comments_dict.values())
+            (sentiment_comments, sentiment_ratio), keywords, language_ratio = results
 
-        # ============================================================
-        # PHASE 0: 댓글 번역 (한 번만 실행!)
-        # ============================================================
-        logger.info("[Phase 0/3] 댓글 번역 중 (DeepL)")
-        logger.info("  번역을 한 번만 실행하여 비용 및 시간 절감")
+            logger.info(f"감정 분석 완료: 긍정 {sentiment_ratio.get('positive', 0)}%, "
+                        f"부정 {sentiment_ratio.get('negative', 0)}%, "
+                        f"기타 {sentiment_ratio.get('other', 0)}%")
+            logger.info(f"키워드 추출 완료: {len(keywords)}개")
+            logger.info(f"언어 감지 완료: {language_ratio}")
 
-        translated_texts = await translate_comments_batch(comment_texts)
+            # ============================================================
+            # PHASE 2: 요약 먼저 실행
+            # ============================================================
+            logger.info("[Phase 2/3] 요약 생성")
+            summary = await safe_summarize(comment_texts)
 
-        logger.info(f"[번역 완료] {len(translated_texts)}개 댓글")
-        if translated_texts:
-            logger.info(f"[번역 샘플] (처음 2개):")
-            for i, text in enumerate(translated_texts[:2], 1):
-                preview = text[:50] + "..." if len(text) > 50 else text
-                logger.info(f"  {i}. {preview}")
-        else:
-            logger.warning("[번역 실패] 원본 텍스트 사용")
-            translated_texts = comment_texts  # 번역 실패 시 원본 사용
+            logger.info(f"요약 완료: {len(summary)}자")
 
-        # ============================================================
-        # PHASE 1: 병렬 분석 (감정 + 키워드 + 언어)
-        # ============================================================
-        logger.info("[Phase 1/3] 병렬 분석 시작 (감정 + 키워드 + 언어)")
-        logger.info("  감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
+            # ============================================================
+            # PHASE 3: 논란 감지
+            # ============================================================
+            logger.info("[Phase 3/3] 논란 감지")
+            is_warning = await safe_check_controversy(translated_texts)
 
-        # 감정 분석에 번역된 텍스트 전달
-        sentiment_task = safe_analyze_sentiment(comments_dict, translated_texts)
-        keywords_task = safe_extract_keywords(comment_texts, top_n=5)
-        language_task = safe_detect_languages(comment_texts)
+            logger.info(f"논란 감지 완료: {'감지됨' if is_warning else '정상'}")
 
-        results = await asyncio.gather(
-            sentiment_task,
-            keywords_task,
-            language_task,
-            return_exceptions=True
-        )
+            # ============================================================
+            # 최종 응답 생성
+            # ============================================================
+            try:
+                video_id_int = int(video_id) if video_id.isdigit() else hash(video_id) % 1000000
+            except:
+                video_id_int = hash(video_id) % 1000000  # 해시값 사용
 
-        (sentiment_comments, sentiment_ratio), keywords, language_ratio = results
+            response = AIAnalysisResponse(
+                videoId=video_id_int,
+                apiVideoId=video_id,
+                summation=summary,
+                isWarning=is_warning,
+                keywords=keywords,
+                sentimentComments=sentiment_comments,
+                languageRatio=language_ratio,
+                sentimentRatio=sentiment_ratio,
+            )
 
-        logger.info(f"감정 분석 완료: 긍정 {sentiment_ratio.get('positive', 0)}%, "
-                    f"부정 {sentiment_ratio.get('negative', 0)}%, "
-                    f"기타 {sentiment_ratio.get('other', 0)}%")
-        logger.info(f"키워드 추출 완료: {len(keywords)}개")
-        logger.info(f"언어 감지 완료: {language_ratio}")
+            logger.info("=" * 70)
+            logger.info("[분석 완료]")
+            logger.info("=" * 70)
+            logger.info(f"긍정: {sentiment_ratio.get('positive', 0)}%")
+            logger.info(f"부정: {sentiment_ratio.get('negative', 0)}%")
+            logger.info(f"기타: {sentiment_ratio.get('other', 0)}%")
+            logger.info(f"키워드: {', '.join(keywords)}")
+            logger.info(f"논란: {'감지됨' if is_warning else '없음'}")
+            logger.info(f"요약: {summary[:50]}...")
+            logger.info("=" * 70)
 
-        # ============================================================
-        # PHASE 2: 요약 + 논란 감지 병렬 실행 (핵심 개선!)
-        # ============================================================
-        logger.info("[Phase 2/3] 요약 + 논란 감지 병렬 실행")
-        logger.info("  두 작업을 동시에 처리하여 시간 단축")
+            return response
 
-        summary, is_warning = await asyncio.gather(
-            safe_summarize(comment_texts),
-            safe_check_controversy(translated_texts),
-            return_exceptions=True
-        )
+        except HTTPException as he:
+            # 이미 정의된 HTTP 예외는 그대로 전달
+            raise he
 
-        logger.info(f"요약 완료: {len(summary)}자")
-        logger.info(f"논란 감지 완료: {'감지됨' if is_warning else '정상'}")
+        except Exception as e:
+            logger.error("=" * 70)
+            logger.error("[에러 발생]")
+            logger.error("=" * 70)
+            logger.error(f"에러 상세: {str(e)}", exc_info=True)
+            logger.error("=" * 70)
 
-        # ============================================================
-        # 최종 응답 생성
-        # ============================================================
-        try:
-            video_id_int = int(video_id) if video_id.isdigit() else hash(video_id) % 1000000
-        except:
-            video_id_int = hash(video_id) % 1000000  # 해시값 사용
-
-        response = AIAnalysisResponse(
-            videoId=video_id_int,
-            apiVideoId=video_id,
-            summation=summary,
-            isWarning=is_warning,
-            keywords=keywords,
-            sentimentComments=sentiment_comments,
-            languageRatio=language_ratio,
-            sentimentRatio=sentiment_ratio,
-        )
-
-        logger.info("=" * 70)
-        logger.info("[분석 완료]")
-        logger.info("=" * 70)
-        logger.info(f"긍정: {sentiment_ratio.get('positive', 0)}%")
-        logger.info(f"부정: {sentiment_ratio.get('negative', 0)}%")
-        logger.info(f"기타: {sentiment_ratio.get('other', 0)}%")
-        logger.info(f"키워드: {', '.join(keywords)}")
-        logger.info(f"논란: {'감지됨' if is_warning else '없음'}")
-        logger.info(f"요약: {summary[:50]}...")
-        logger.info("=" * 70)
-
-        return response
-
-    except HTTPException as he:
-        # 이미 정의된 HTTP 예외는 그대로 전달
-        raise he
-
-    except Exception as e:
-        logger.error("=" * 70)
-        logger.error("[에러 발생]")
-        logger.error("=" * 70)
-        logger.error(f"에러 상세: {str(e)}", exc_info=True)
-        logger.error("=" * 70)
-
-        raise HTTPException(
-            status_code=500,
-            detail=f"분석 중 오류가 발생했습니다: {str(e)}"
-        )
+            raise HTTPException(
+                status_code=500,
+                detail=f"분석 중 오류가 발생했습니다: {str(e)}"
+            )
 
 
 # ============================================================
