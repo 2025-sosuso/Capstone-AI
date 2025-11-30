@@ -4,8 +4,8 @@ YouTube 댓글 분석 API 서버
 
 [개선사항]
 - 번역을 Phase 0에서 한 번만 실행 (비용 절감, 속도 향상)
+- translate.py의 배치 번역 사용 (N번 API 호출 → 1번으로 최적화)
 - 감정 분석과 논란 감지에서 번역 결과 재사용
-- Phase 2와 Phase 3을 병렬 실행 (요약 + 논란 감지 동시 처리)
 """
 
 from fastapi import FastAPI, HTTPException
@@ -16,7 +16,8 @@ import logging
 
 # 우리가 만든 분석 파이프라인들 불러오기
 from src.pipelines.summarize import summarize_comments_with_gpt
-from src.pipelines.sentiment import analyze_sentiment_async, translate_comments_batch
+from src.pipelines.sentiment import analyze_sentiment_async
+from src.pipelines.translate import translate_batch
 from src.pipelines.keywords import extract_keywords_tfidf
 from src.pipelines.lang_ratio import detect_languages
 from src.pipelines.controversy import is_video_controversial
@@ -40,20 +41,8 @@ logger = logging.getLogger(__name__)
 # 요청(Request) 형식 정의
 # ============================================================
 class AnalysisRequest(BaseModel):
-    """
-    백엔드에서 보내는 요청 형식
-
-    예시:
-    {
-      "videoId": "dQw4w9WgXcQ",
-      "comments": {
-        "comment_001": "정말 유익한 영상이네요!",
-        "comment_002": "최악이에요"
-      }
-    }
-    """
-    videoId: str  # YouTube 비디오 ID (예: "dQw4w9WgXcQ")
-    comments: Dict[str, str]  # {댓글ID: 댓글내용}
+    videoId: str
+    comments: Dict[str, str]
 
 
 # ============================================================
@@ -62,7 +51,7 @@ class AnalysisRequest(BaseModel):
 app = FastAPI(
     title="YouTube Comment Analyzer",
     description="유튜브 댓글 종합 분석 API",
-    version="2.4.0",  # 병렬 처리 최적화 버전
+    version="2.5.0",
 )
 
 
@@ -70,28 +59,17 @@ app = FastAPI(
 # 비동기 헬퍼 함수
 # ============================================================
 async def safe_analyze_sentiment(comments_dict: Dict[str, str], translated_texts: List[str]):
-    """
-    감정 분석 (번역된 텍스트 사용)
-
-    Args:
-        comments_dict: {댓글ID: 댓글내용}
-        translated_texts: 이미 번역된 댓글 리스트
-
-    Returns:
-        (sentiment_comments, sentiment_ratio)
-    """
+    """감정 분석 (번역된 텍스트 사용)"""
     try:
         logger.info("[감정 분석] 시작 (번역된 텍스트 재사용)")
 
         result = await asyncio.wait_for(
-            analyze_sentiment_async(comments_dict, translated_texts),  # 번역된 텍스트 전달
+            analyze_sentiment_async(comments_dict, translated_texts),
             timeout=90.0
         )
 
         logger.info("[감정 분석] 완료")
-        # (sentiment_comments, sentiment_ratio, translated_texts) 반환됨
-        # 하지만 번역은 이미 Phase 0에서 완료했으므로 처음 2개만 사용
-        return result[:2]  # (sentiment_comments, sentiment_ratio)만 반환
+        return result  # (sentiment_comments, sentiment_ratio)
 
     except asyncio.TimeoutError:
         logger.error("[감정 분석] 타임아웃 (90초)")
@@ -191,7 +169,7 @@ async def safe_summarize(comment_texts: List[str]):
         return summary
 
     except asyncio.TimeoutError:
-        logger.error("[요약 생성] 타임아웃 (60초)")
+        logger.error("[요약 생성] 타임아웃 (120초)")
         return "댓글 요약을 생성할 수 없습니다."
 
     except Exception as e:
@@ -202,26 +180,21 @@ async def safe_summarize(comment_texts: List[str]):
 # ============================================================
 # 메인 분석 엔드포인트
 # ============================================================
-# 전역 락 (한 번에 하나의 요청만 처리)
 analysis_lock = asyncio.Lock()
+
+
 @app.post("/analyze", response_model=AIAnalysisResponse)
 async def analyze(request: AnalysisRequest):
     """
     유튜브 댓글 종합 분석 API
 
     [처리 과정]
-    0. 댓글 번역 (DeepL, 한 번만 실행)
-    1. 감정 분석 (GoEmotions 모델, 번역 결과 재사용) + 키워드 + 언어 (병렬)
-    2. 요약 (GPT) + 논란 감지 (병렬) - 개선!
-
-    [입력]
-    - videoId: YouTube 비디오 ID
-    - comments: 댓글 딕셔너리
-
-    [출력]
-    - AIAnalysisResponse: 종합 분석 결과
+    0. 댓글 번역 (DeepL 배치 API)
+    1. 감정 분석 + 키워드 + 언어 (병렬)
+    2. 요약 생성
+    3. 논란 감지
     """
-    async with analysis_lock:  # ⭐ 이전 요청 끝날 때까지 대기
+    async with analysis_lock:
         logger.info("=" * 70)
         logger.info("[새 분석 요청 도착]")
         logger.info("=" * 70)
@@ -245,30 +218,19 @@ async def analyze(request: AnalysisRequest):
             comment_texts = list(comments_dict.values())
 
             # ============================================================
-            # PHASE 0: 댓글 번역 (한 번만 실행!)
+            # PHASE 0: 댓글 번역
             # ============================================================
-            logger.info("[Phase 0/3] 댓글 번역 중 (DeepL)")
-            logger.info("  번역을 한 번만 실행하여 비용 및 시간 절감")
+            logger.info("[Phase 0/3] 댓글 번역 중 (DeepL 배치 API)")
 
-            translated_texts = await translate_comments_batch(comment_texts)
+            translated_texts = await translate_batch(comment_texts)
 
             logger.info(f"[번역 완료] {len(translated_texts)}개 댓글")
-            if translated_texts:
-                logger.info(f"[번역 샘플] (처음 2개):")
-                for i, text in enumerate(translated_texts[:2], 1):
-                    preview = text[:50] + "..." if len(text) > 50 else text
-                    logger.info(f"  {i}. {preview}")
-            else:
-                logger.warning("[번역 실패] 원본 텍스트 사용")
-                translated_texts = comment_texts  # 번역 실패 시 원본 사용
 
             # ============================================================
             # PHASE 1: 병렬 분석 (감정 + 키워드 + 언어)
             # ============================================================
             logger.info("[Phase 1/3] 병렬 분석 시작 (감정 + 키워드 + 언어)")
-            logger.info("  감정 분석에 번역된 텍스트 재사용 (중복 번역 방지)")
 
-            # 감정 분석에 번역된 텍스트 전달
             sentiment_task = safe_analyze_sentiment(comments_dict, translated_texts)
             keywords_task = safe_extract_keywords(comment_texts, top_n=5)
             language_task = safe_detect_languages(comment_texts)
@@ -289,7 +251,7 @@ async def analyze(request: AnalysisRequest):
             logger.info(f"언어 감지 완료: {language_ratio}")
 
             # ============================================================
-            # PHASE 2: 요약 먼저 실행
+            # PHASE 2: 요약 생성
             # ============================================================
             logger.info("[Phase 2/3] 요약 생성")
             summary = await safe_summarize(comment_texts)
@@ -364,7 +326,6 @@ if __name__ == "__main__":
     logger.info("=" * 70)
     logger.info("로컬: http://localhost:7777")
     logger.info("API 문서: http://localhost:7777/docs")
-    logger.info("Redoc: http://localhost:7777/redoc")
     logger.info("=" * 70)
 
     uvicorn.run(
