@@ -12,7 +12,7 @@
 | **art** | 이미지, 아이콘, 디자인 리소스 | `art: add logo and app splash image` |
 | **merge** | 브랜치 병합 | `merge: feature/api into main` |
 | **rename** | 파일/폴더 이름 변경 또는 위치 이동 | `rename: move hooks folder into utils` |
-| **chore** | 잡일 (패키지 설치, 설정 변경 등) | `chore: add eslint config and prettier` |
+| **chore** | 잡일 (패키지 설치, 설정 변경, 파일정리 및 삭제 등) | `chore: add eslint config and prettier` |
 
 ## 📌 정리
 
