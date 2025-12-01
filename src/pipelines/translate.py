@@ -44,9 +44,9 @@ def should_skip_translation(text: str) -> bool:
     """
     if not text or not text.strip():
         return True
-
-    cleaned = re.sub(r"[^\w\s]", "", text)
-    return bool(re.fullmatch(r"[A-Za-z0-9\s]+", cleaned))
+    # 이모지 제거 후 ASCII 여부 판단
+    text_no_emoji = re.sub(r'[\U00010000-\U0010ffff\u2600-\u27BF]', '', text)
+    return text_no_emoji.isascii()
 
 
 async def translate_batch(texts: List[str]) -> List[str]:
