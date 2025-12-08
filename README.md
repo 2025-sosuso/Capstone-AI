@@ -9,6 +9,8 @@
 | <img src="https://avatars.githubusercontent.com/u/202420613?v=4" width="100px;"/> | <img src="https://avatars.githubusercontent.com/u/102670510?v=4" width="100px;"/> | <img src="https://avatars.githubusercontent.com/u/105547387?v=4" width="100px;"/> | <img src="https://avatars.githubusercontent.com/u/104975763?v=4" width="100px;"/> |
 | [이소민](https://github.com/isoxosoi) | [최윤경](https://github.com/yun) | [강예린](https://github.com/kyer5) | [차주혜](https://github.com/Alal11) |
 
+<br></br>
+
 ## 📌 프로젝트 요약
 
 **YouTube 댓글 AI 분석 서비스**는 방대한 YouTube 댓글 데이터를 AI로 분석하여 시청자와 크리에이터 모두에게 실질적인 인사이트를 제공하는 웹 서비스입니다.
@@ -20,7 +22,7 @@
 - 🔥 **자체 인기 랭킹**: YouTube 인기 급상승 기능 폐지를 대체하는 독자적인 트렌드 분석
 - 💬 **신조어 자동 해석**: 댓글 내 밈, 유행어를 AI가 실시간으로 해석
 
----
+<br></br>
 
 ## 🚨 문제 정의
 
@@ -61,7 +63,7 @@
 ✅ **AI 기반 신조어 해석**  
 댓글 단어를 드래그하면 즉시 의미를 설명하여 언어 장벽 제거
 
----
+<br></br>
 
 ## ✨ 주요 기능
 
@@ -127,9 +129,13 @@
 - 댓글의 언어 비율을 자동으로 분석
 - 글로벌 시청자 분포 파악
 - 다국어 댓글에 대한 통계 제공
+ 
+<br></br>
 
 ## 🎥 시연 영상
 [🔗 YouTube에서 보기](https://www.youtube.com/watch?v=fYeV95uBCds)
+
+<br></br>
 
 ## 🛠️ 기술 스택
 
@@ -145,8 +151,12 @@
 
  &ensp;![AI Stack](https://go-skill-icons.vercel.app/api/icons?i=python,fastapi,pytorch,huggingface,git)
 
+<br></br>
+
 ## 🏗 시스템 아키텍처
 <img width="1920" height="1080" alt="Image" src="https://github.com/user-attachments/assets/a655b1be-c8c5-4a4c-ad15-a46764132f9a" />
+
+<br></br>
 
 ## 🎨 사용 예시
 
