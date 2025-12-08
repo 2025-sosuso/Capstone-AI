@@ -1,4 +1,5 @@
 # src/utils/youtube.py
+# 프로젝트 할 때는 사용 안 하지만 로컬에서 코드 테스트할 때 사용함
 """
 YouTube 댓글 수집 및 전처리 유틸리티
 - fetch_youtube_comments: 댓글 텍스트만 리스트 형태로 반환
