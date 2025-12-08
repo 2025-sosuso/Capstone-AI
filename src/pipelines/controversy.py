@@ -48,10 +48,10 @@ from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipe
 # API 키 및 유틸리티 불러오기
 # ============================================================
 try:
-    from src.config import DEEPL_API_KEY, YOUTUBE_API_KEY, VIDEO_KEY
+    from src.config import YOUTUBE_API_KEY, VIDEO_KEY
     from src.utils.youtube import fetch_youtube_comments
 except ImportError:
-    from ..config import DEEPL_API_KEY, YOUTUBE_API_KEY, VIDEO_KEY
+    from ..config import YOUTUBE_API_KEY, VIDEO_KEY
     from ..utils.youtube import fetch_youtube_comments
 
 _MNAME = "facebook/bart-large-mnli"
@@ -85,32 +85,6 @@ def _get_classifier():
         )
         print("[SUCCESS] BART 논란 감지 모델 로딩 완료!")
     return _clf
-
-
-def _is_english(text: str) -> bool:
-    cleaned = re.sub(r"[^\w\s.,!?\'\"-]", "", text or "")
-    return bool(re.fullmatch(r"[A-Za-z0-9\s\.,;:'\"!?()\[\]{}@#$%^&*_\-=+/<>|~]+", cleaned))
-
-
-async def _translate_to_en_batch(texts: List[str]) -> List[str]:
-    """DeepL로 일괄 번역(키 없으면 원문 반환). 네트워크 이슈 시 원문 사용."""
-    if not DEEPL_API_KEY:
-        return texts
-    url = "https://api.deepl.com/v2/translate"
-    out: List[str] = []
-    async with httpx.AsyncClient(timeout=20.0) as client:
-        for t in texts:
-            if _is_english(t):
-                out.append(t)
-                continue
-            data = {"auth_key": DEEPL_API_KEY, "text": t, "target_lang": "EN"}
-            try:
-                r = await client.post(url, data=data)
-                r.raise_for_status()
-                out.append(r.json()["translations"][0]["text"])
-            except Exception:
-                out.append(t)
-    return out
 
 
 def _clean_and_filter(texts: List[str]) -> List[str]:
